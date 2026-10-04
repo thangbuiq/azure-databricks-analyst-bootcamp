@@ -1,0 +1,31 @@
+name: Validate solution
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  deployment-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --locked --python 3.12
+      - run: uv run prek run --all-files
+      - run: uv run pytest
+      - name: Validate Terraform without deploying
+        run: |
+          uv run python - <<'PY'
+          import subprocess
+          from provisioner.config import repository_root
+          from provisioner.terraform import ensure_terraform
+          root = repository_root()
+          binary = ensure_terraform(root)
+          command = [str(binary), f'-chdir={root / "azure-terraform-provisioner"}']
+          subprocess.run(command + ['fmt', '-check'], check=True)
+          subprocess.run(command + ['init', '-backend=false', '-input=false'], check=True)
+          subprocess.run(command + ['validate'], check=True)
+          PY

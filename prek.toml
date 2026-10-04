@@ -1,0 +1,20 @@
+minimum_prek_version = "0.3.9"
+
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "ruff-check"
+name = "Ruff lint and import fixes"
+language = "system"
+entry = "uv run --locked ruff check --fix --force-exclude --config pyproject.toml"
+types_or = ["python", "pyi"]
+priority = 0
+
+[[repos.hooks]]
+id = "ruff-format"
+name = "Ruff format"
+language = "system"
+entry = "uv run --locked ruff format --force-exclude --config pyproject.toml"
+types_or = ["python", "pyi"]
+priority = 1

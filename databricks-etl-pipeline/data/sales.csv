@@ -1,0 +1,11 @@
+sale_id,sale_date,product,category,quantity,unit_price
+1,2026-01-01, Product 1 , Books ,1,10.00
+2,2026-01-01, Product 2 ,ELECTRONICS,2,10.00
+3,2026-01-01, Product 3 , Books ,3,10.00
+4,2026-01-01, Product 4 ,ELECTRONICS,4,10.00
+5,2026-01-01, Product 5 , Books ,5,10.00
+6,2026-01-01, Product 6 ,ELECTRONICS,6,10.00
+7,2026-01-01, Product 7 , Books ,7,10.00
+8,2026-01-01, Product 8 ,ELECTRONICS,8,10.00
+9,2026-01-01, Product 9 , Books ,9,10.00
+10,2026-01-01, Product 10 ,ELECTRONICS,10,10.00
