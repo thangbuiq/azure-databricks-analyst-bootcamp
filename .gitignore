@@ -1,3 +1,6 @@
+# Personal
+docs/superpowers
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -216,3 +219,15 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Generated demo data, tool downloads and deployment metadata
+.runtime/
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+spark-warehouse/
+metastore_db/
+derby.log
+.superpowers/
