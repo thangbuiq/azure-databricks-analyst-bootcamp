@@ -53,6 +53,37 @@ az ad sp show --id "<client-id>" --query id -o tsv
 
 Put that result in `AZURE_PRINCIPAL_OBJECT_ID`. Azure CLI documents [service principal creation](https://learn.microsoft.com/en-us/cli/azure/create-an-azure-service-principal-azure-cli?view=azure-cli-latest) and [role assignment](https://learn.microsoft.com/en-us/azure/role-based-access-control/role-assignments-cli).
 
+For example, if your subscription ID is `05ee8bdb-6ebb-4e33-bb3c-ed447703499d`, the commands would be like this on Azure Cloud Shell:
+
+```text
+azureuser [ ~ ]$ az account set --subscription "05ee8bdb-6ebb-4e33-bb3c-ed447703499d"
+azureuser [ ~ ]$ az ad sp create-for-rbac --name "course-sp" --role Contributor --scopes /subs
+azureuser [ ~ ]$ az ad sp create-for-rbac --name "course-sp" --role Contributor --scopes /subs
+azureuser [ ~ ]$ az ad sp create-for-rbac --name "course-sp" --role Contributor --scopes /subscriptions/05ee8bdb-6ebb-4e33-bb3c-ed447703499d --sdk-auth
+Option '--sdk-auth' has been deprecated and will be removed in a future release.
+Creating 'Contributor' role assignment under scope '/subscriptions/05ee8bdb-6ebb-4e33-bb3c-ed447703499d'
+The output includes credentials that you must protect. Be sure that you do not include these credentials in your code or check the credentials into your source control. For more information, see https://aka.ms/azadsp-cli
+{
+  "clientId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", # this will be your AZURE_CLIENT_ID
+  "clientSecret": "axxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", # this will be your AZURE_CLIENT_SECRET
+  "subscriptionId": "05ee8bdb-6ebb-4e33-bb3c-ed447703499d", # this will be your AZURE_SUBSCRIPTION_ID
+  "tenantId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", # this will be your AZURE_TENANT_ID
+  "activeDirectoryEndpointUrl": "https://login.microsoftonline.com",
+  "resourceManagerEndpointUrl": "https://management.azure.com/",
+  "activeDirectoryGraphResourceId": "https://graph.windows.net/",
+  "sqlManagementEndpointUrl": "https://management.core.windows.net:8443/",
+  "galleryEndpointUrl": "https://gallery.azure.com/",
+  "managementEndpointUrl": "https://management.core.windows.net/"
+}
+
+az ad app list --display-name "course-sp" --query "[].{appId:appId,objectId:objectId,displayName:displayName}" -o table
+AppId                                 DisplayName
+------------------------------------  -------------
+b1deb2ac-82f1-4fc2-a331-39aa15728f1e  course-sp
+
+
+```
+
 ## Provision Azure resources
 
 After filling in the Azure values in `.env`, run this at the repository root:
