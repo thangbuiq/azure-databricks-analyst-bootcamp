@@ -6,6 +6,8 @@ from unittest.mock import Mock
 
 
 def test_upload_uses_databricks_secret_for_storage_key(tmp_path, monkeypatch):
+    from databricks.sdk.service import jobs as job_models
+
     from provisioner import databricks
     from provisioner.config import load_settings
 
@@ -54,11 +56,12 @@ def test_upload_uses_databricks_secret_for_storage_key(tmp_path, monkeypatch):
     assert "private-secret" not in utility["content"].decode()
     job = client.jobs.create.call_args.kwargs
     assert job["name"] == settings.databricks_job_name
-    assert job["performance_target"] == "STANDARD"
+    assert job["performance_target"] == job_models.PerformanceTarget.STANDARD
     task = job["tasks"][0]
-    assert "new_cluster" not in task and "job_cluster_key" not in task
-    assert "existing_cluster_id" not in task
-    assert task["notebook_task"]["notebook_path"] == settings.notebook_path + "/sales_demo"
+    assert isinstance(task, job_models.Task)
+    assert task.new_cluster is None and task.job_cluster_key is None
+    assert task.existing_cluster_id is None
+    assert task.notebook_task.notebook_path == settings.notebook_path + "/sales_demo"
 
 
 def test_deploy_discovers_new_notebooks_and_utilities(tmp_path, monkeypatch):

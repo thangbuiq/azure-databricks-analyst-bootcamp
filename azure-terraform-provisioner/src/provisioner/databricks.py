@@ -50,7 +50,7 @@ def deploy_serverless_job(settings, client=None):
         job_id = matches[0].job_id
         client.jobs.reset(job_id=job_id, new_settings=job_settings)
         return str(job_id)
-    return str(client.jobs.create(**job_settings.as_dict()).job_id)
+    return str(client.jobs.create(**job_settings.as_shallow_dict()).job_id)
 
 
 def deploy_notebooks(settings, resources=None) -> str:
