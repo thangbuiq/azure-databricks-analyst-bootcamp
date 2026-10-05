@@ -35,7 +35,14 @@ class Settings:
     databricks_job_name: str = "course-sales-etl"
     databricks_job_id: str = ""
     notebook_path: str = "/Shared/analytics-demo"
-    secret_scope: str = "analytics-demo"
+    databricks_catalog: str = "workspace"
+    databricks_schema: str = "default"
+    databricks_volume: str = "analytics_demo"
+    table_prefix: str = "analytics_demo_sales"
+
+    @property
+    def volume_path(self):
+        return f"/Volumes/{self.databricks_catalog}/{self.databricks_schema}/{self.databricks_volume}"
 
     @property
     def notebook_source_dir(self):
@@ -106,11 +113,8 @@ def load_settings(env_file: Path | None = None) -> Settings:
 
 
 def notebook_parameters(settings):
-    account = settings.storage_account + ".dfs.core.windows.net"
     return {
-        "raw_path": f"abfss://raw@{account}/sales/sales.csv",
-        "lakehouse_path": f"abfss://lakehouse@{account}/sales",
-        "report_path": f"abfss://reports@{account}/sales",
-        "storage_account": settings.storage_account,
-        "secret_scope": settings.secret_scope,
+        "raw_path": f"{settings.volume_path}/raw/sales.csv",
+        "table_prefix": f"{settings.databricks_catalog}.{settings.databricks_schema}.{settings.table_prefix}",
+        "report_path": f"{settings.volume_path}/reports/sales/report.parquet",
     }

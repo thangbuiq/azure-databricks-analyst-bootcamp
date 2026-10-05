@@ -6,9 +6,11 @@ This guide covers the Azure access and setup for this repository. Python command
 
 The provisioner creates a resource group, an Azure Storage account with `raw`, `lakehouse`, and `reports` containers, and an Azure Data Factory. The default region is Japan East (`japaneast`). Resource names and region defaults are in [config.py](azure-terraform-provisioner/src/provisioner/config.py); the storage account and factory names come from the root `.env`.
 
-This setup uses the storage account key for the course data. The provisioner reads it from Terraform's sensitive output, uploads the sample CSV with it, and stores it in a Databricks secret scope for the notebook. The key is never put in notebook source, job parameters, or normal command output. Terraform state contains the key, so keep the local state files private and never share or commit them.
+The provisioner reads the storage account key from Terraform's sensitive output to upload and stage data. ADF stores it in a secure linked-service connection string for report export. No Azure credentials are placed in Databricks notebooks. Terraform state contains credentials; keep it private and never commit it.
 
-An account key can read and write all data in this dedicated demo storage account. Give Databricks secret-scope access only to students who should use the demo data. Microsoft recommends Entra ID authorization for production storage; this key-based approach keeps the course setup within Contributor permissions. Contributor includes permission to list storage account keys ([key permissions](https://learn.microsoft.com/en-us/azure/storage/common/storage-account-keys-manage), [built-in Storage roles](https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles/storage)). See also [Shared Key authorization](https://learn.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key).
+Contributor can list storage account keys, so no data-plane role assignment is required. The key grants access to this dedicated demo account. See [key permissions](https://learn.microsoft.com/en-us/azure/storage/common/storage-account-keys-manage).
+
+Free Edition notebooks read a managed-volume CSV snapshot and write managed Delta tables. They export Parquet to the volume; ADF copies it through the Databricks Files API into Azure's `reports` container. The Azure `lakehouse` container is retained but unused by this workflow.
 
 Storage and Data Factory can incur Azure charges. Databricks Free Edition is a separate workspace and is not created by Terraform.
 
@@ -73,7 +75,7 @@ Set `DATABRICKS_HOST` and `DATABRICKS_TOKEN` in `.env`, then deploy:
 uv run solution deploy
 ```
 
-Deployment uploads the ten-row CSV, all notebooks and utilities under `databricks-etl-pipeline/src/notebooks/`, creates or updates the serverless Databricks job, and deploys the ADF pipelines. The storage key is saved as a Databricks secret named `storage-account-key` in the configured scope; it is not passed in notebook parameters.
+Deployment uploads the ten-row CSV, all notebooks and utilities under `databricks-etl-pipeline/src/notebooks/`, creates or updates the serverless Databricks job, and deploys the ADF pipelines. Deployment stages the Azure CSV into a managed volume. Each deployment resets the source to the ten-row fixture and refreshes the snapshot. ADF executions reuse that snapshot. No Databricks secret scope is required.
 
 Follow [Execute online in the README](README.md#4-execute-online) to run a notebook or start the ADF pipeline. After all Azure and Databricks values are configured, `uv run solution setup` runs provisioning and deployment together.
 
@@ -85,7 +87,7 @@ To remove the resource group and its demo data, run:
 uv run solution cleanup --confirm-resource-group rg-analytics-demo
 ```
 
-If you changed the resource group in `config.py`, use that exact name. Cleanup checks the configured name against Terraform state before destroying resources. It does not delete your Databricks workspace.
+If you changed the resource group in `config.py`, use that exact name. Cleanup checks the configured name against Terraform state before destroying resources. It leaves Databricks jobs, notebooks, tables, and volumes. Remove these separately in the workspace and Catalog Explorer.
 
 ## Troubleshooting
 
@@ -93,3 +95,11 @@ If you changed the resource group in `config.py`, use that exact name. Cleanup c
 - **Storage requests fail with 403:** confirm the storage account allows Shared Key authorization. Some subscription policies disable it; this teaching setup needs Shared Key because students cannot assign data-plane RBAC roles themselves.
 - **Databricks deploy says host or token is missing:** set `DATABRICKS_HOST` and `DATABRICKS_TOKEN` in the root `.env`; the host must start with `https://`.
 - **Terraform reports a name collision:** storage account and Data Factory names must be globally unique. Change the corresponding `.env` value and rerun provisioning.
+
+- **`CONFIG_NOT_AVAILABLE` for `fs.azure.account.key...`:** serverless does not allow that Spark configuration. Redeploy updated notebooks, which use managed storage. See [supported Spark settings](https://learn.microsoft.com/en-us/azure/databricks/spark/conf).
+- **Direct Azure connections fail from Free Edition:** outbound access is restricted. The local deployer stages source data, and ADF exports reports without notebook outbound connections. See [Free Edition limits](https://docs.databricks.com/aws/en/getting-started/free-edition-limitations).
+- **Invalid workspace URL in Azure Databricks Job activity:** Free Edition uses a different workspace domain. This pipeline uses Web activities to start and poll the serverless job through the Jobs API instead.
+- **Volume/table permission errors:** the deployer needs volume creation permission in the configured catalog/schema (default `workspace.default`). Notebook users need volume read/write and table creation/access.
+- **Manual notebook succeeds but report is absent in Azure:** run `uv run solution run-adf` for the Azure copy. Manual execution writes only the volume report. The single-file export suits this ten-row teaching dataset.
+
+ADF uses the workspace token for Jobs API calls and the secure HTTP linked service for Files API downloads. Activity inputs are hidden in monitoring. Redeploy after rotating the token; restrict access to pipeline definitions to trusted course maintainers.

@@ -59,11 +59,13 @@ sequenceDiagram
     participant PBI as Power BI
 
     Parent->>Child: Execute Pipeline and wait for completion
-    Child->>Notebook: Execute notebook by workspace path
-    Notebook->>Blob: Read raw data
+    Child->>Notebook: Start serverless job through Jobs API
+    Note over Notebook,Blob: Deployment stages Azure CSV in a managed volume
+    Notebook->>Notebook: Read staged CSV
     Note over Notebook: Bronze → Silver → Gold using Spark and Delta Lake
-    Notebook->>Blob: Export Gold as Parquet
+    Notebook->>Notebook: Write managed Delta tables and volume Parquet
     Notebook-->>Child: Execution result
+    Child->>Blob: Copy volume Parquet through Files API
     Child-->>Parent: Success
     Parent->>Demo: Execute Pipeline and wait for completion
     Demo-->>Parent: Execution result
@@ -119,9 +121,9 @@ Use [.env.example](.env.example) as the configuration reference. For Azure permi
 | `DATABRICKS_HOST` | Full HTTPS URL from your Free Edition workspace browser |
 | `DATABRICKS_TOKEN` | Workspace access token used to deploy notebooks and the job |
 
-Set `DATABRICKS_NOTEBOOK_PATH` to a workspace folder such as `/Shared/analytics-demo`. Region, resource group, secret scope, serverless job name, and timeouts are configured in [config.py](azure-terraform-provisioner/src/provisioner/config.py).
+Set `DATABRICKS_NOTEBOOK_PATH` to a workspace folder such as `/Shared/analytics-demo`. Region, resource group, catalog/schema/volume, table prefix, serverless job name, and timeouts are configured in [config.py](azure-terraform-provisioner/src/provisioner/config.py).
 
-The Azure service principal needs Contributor access to create the resource group, Storage, and Data Factory. Storage uses an account key saved in a Databricks secret scope, so the students running a notebook need permission to read that scope. The key grants access to all data in this dedicated demo storage account; keep the scope limited to course users. Neither the storage key nor the Databricks token is written into notebook source.
+The Azure service principal needs Contributor access. The local provisioner and ADF use the storage account key; notebooks use managed Databricks storage and need no Azure credentials. ADF stores storage credentials in secure linked-service fields.
 
 Free Edition supports serverless compute only. The deployed job leaves cluster settings out so it runs on serverless. Its fair usage limits apply, including the account's job concurrency quota. See [Free Edition limits](https://learn.microsoft.com/en-us/azure/databricks/getting-started/free-edition-limitations).
 
@@ -140,7 +142,7 @@ The command does not create a Databricks workspace. Use your existing Free Editi
 uv run solution deploy
 ```
 
-Deployment uploads every Python notebook and utility beneath `DATABRICKS_NOTEBOOK_PATH`, uploads the ten-row source CSV to Azure Storage, creates or updates the serverless Databricks job, and configures ADF to run that job. ADF's Databricks Job activity runs the job with serverless compute. See [ADF Databricks Job activity](https://learn.microsoft.com/en-us/azure/data-factory/transform-data-databricks-job).
+Deployment uploads every Python notebook and utility beneath `DATABRICKS_NOTEBOOK_PATH`, uploads the ten-row source CSV to Azure Storage, creates or updates the serverless Databricks job, and configures ADF to run that job. ADF Web activities call the Databricks Jobs API and poll for completion because the Azure Databricks Job activity rejects Free Edition workspace URLs.
 
 The Azure Storage account and Data Factory can incur Azure charges. Free Edition job execution uses Databricks serverless quotas.
 
@@ -149,9 +151,9 @@ For later infrastructure changes and deployment together, `uv run solution setup
 
 ### 4. Execute online
 
-Open the Databricks workspace and a notebook inside the folder configured by `DATABRICKS_NOTEBOOK_PATH`. Select **Serverless** compute, then **Run All**. The executing student account needs permission to read the notebook and utility file, use serverless compute, and read the configured secret scope.
+Open the Databricks workspace and a notebook inside the folder configured by `DATABRICKS_NOTEBOOK_PATH`. Select **Serverless** compute, then **Run All**. The executing student account needs permission to read the notebook and utility file, use serverless compute, and read/write the managed volume and tables. The deployment identity needs permission to create a volume and tables in the configured schema (default: `workspace.default`).
 
-The source notebook is maintained in `databricks-etl-pipeline/src/notebooks/`. Its cells use `spark.sql` and temporary views for the transformations, then check the resulting tables and Parquet output inside Databricks. The adjacent `utils.py` provides storage setup and `write_data(frame, path, format="delta")`; use `format="parquet"` for reporting exports. Deployment uploads this as a regular Python file beside the notebook so `from utils import setup_storage, write_data` works. See [Databricks module imports](https://learn.microsoft.com/en-us/azure/databricks/files/workspace-modules).
+The source notebook is maintained in `databricks-etl-pipeline/src/notebooks/`. Its cells use `spark.sql` and temporary views for the transformations, then check the resulting tables and Parquet output inside Databricks. The adjacent `utils.py` provides parameter setup and `write_data(frame, target, format="delta")` for managed tables; use `format="parquet"` for reporting exports. Deployment uploads this as a regular Python file beside the notebook so `from utils import setup_parameters, write_data` works. See [Databricks module imports](https://learn.microsoft.com/en-us/azure/databricks/files/workspace-modules).
 
 To start the master ADF pipeline (the sales child runs its serverless Databricks job, then the dummy child runs on success):
 
@@ -186,3 +188,9 @@ uv run solution cleanup --confirm-resource-group YOUR_RESOURCE_GROUP
 ```
 
 Cleanup verifies the group against Terraform state before destroying its managed resources, including stored demo data.
+
+### Free Edition data flow
+
+Deployment uploads the ten-row fixture to Azure, then stages a snapshot in a Databricks managed volume. ADF runs reuse that snapshot. Redeploy to refresh the course data. Bronze/Silver/Gold are managed Delta tables; the Azure `lakehouse` container is retained but unused by this workflow.
+
+Manual notebook execution writes Parquet into the volume. Run `uv run solution run-adf` to also copy the report to Azure. The single-file export is intended for the ten-row example. Azure cleanup leaves Databricks jobs, notebooks, managed tables, and volumes; remove these separately in the workspace and Catalog Explorer.

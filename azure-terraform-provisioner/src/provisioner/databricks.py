@@ -1,10 +1,13 @@
 """Upload teaching notebooks and create the serverless ETL job."""
 
+from io import BytesIO
+
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import ResourceAlreadyExists
-from databricks.sdk.service import jobs, workspace
+from databricks.sdk.service import catalog, jobs, workspace
 
 from provisioner.config import notebook_parameters
+from provisioner.storage import download_fixture
 
 
 def workspace_client(settings, resources=None):
@@ -60,13 +63,19 @@ def deploy_notebooks(settings, resources=None) -> str:
         raise ValueError("Terraform storage key is missing; run: uv run solution provision")
     client = workspace_client(settings, resources)
     try:
-        client.secrets.create_scope(scope=settings.secret_scope)
+        client.volumes.create(
+            catalog_name=settings.databricks_catalog,
+            schema_name=settings.databricks_schema,
+            name=settings.databricks_volume,
+            volume_type=catalog.VolumeType.MANAGED,
+        )
     except ResourceAlreadyExists:
         pass
-    client.secrets.put_secret(
-        scope=settings.secret_scope,
-        key="storage-account-key",
-        string_value=storage_key,
+    client.files.create_directory(f"{settings.volume_path}/raw")
+    client.files.upload(
+        notebook_parameters(settings)["raw_path"],
+        BytesIO(download_fixture(settings, storage_key)),
+        overwrite=True,
     )
     for source_file in sorted(settings.notebook_source_dir.rglob("*.py")):
         source = source_file.read_text()

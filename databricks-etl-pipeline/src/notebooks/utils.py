@@ -1,34 +1,36 @@
-"""Shared notebook helpers; uploaded as a regular Python workspace file."""
+"""Shared serverless helpers for managed Delta tables and volume files."""
 
-from urllib.parse import urlparse
+import shutil
+from pathlib import Path
 
 
-def setup_storage(spark, dbutils, defaults):
-    """Read notebook widgets and configure Azure storage using a secret scope."""
-    names = ("raw_path", "lakehouse_path", "report_path", "storage_account", "secret_scope")
+def setup_parameters(spark, dbutils, defaults):
+    """Read the non-secret locations supplied by deployment or notebook widgets."""
+    names = ("raw_path", "table_prefix", "report_path")
     for name in names:
         dbutils.widgets.text(name, defaults.get(name, ""))
     params = {name: dbutils.widgets.get(name) for name in names}
     missing = [name for name, value in params.items() if not value]
     if missing:
         raise ValueError("Missing notebook parameters: " + ", ".join(missing))
-    if params["lakehouse_path"].rstrip("/") == params["report_path"].rstrip("/"):
-        raise ValueError("Use separate lakehouse and reporting paths")
-    account = params["storage_account"] + ".dfs.core.windows.net"
-    storage_key = dbutils.secrets.get(scope=params["secret_scope"], key="storage-account-key")
-    spark.conf.set(f"fs.azure.account.key.{account}", storage_key)
     spark.conf.set("spark.sql.session.timeZone", "UTC")
     return params
 
 
-def write_data(frame, path, format="delta"):
-    """Replace a dedicated dataset with Delta or Parquet output."""
-    parsed = urlparse(path)
-    if parsed.path.rstrip("/") in ("", ".", "..") or ".." in parsed.path.split("/"):
-        raise ValueError("Use a dedicated dataset path, never a filesystem/container root")
-    if format not in ("delta", "parquet"):
-        raise ValueError("Use delta or parquet")
-    writer = frame.write.format(format).mode("overwrite")
+def write_data(frame, target, format="delta"):
+    """Overwrite a managed Delta table or one small Parquet file in a volume."""
     if format == "delta":
-        writer = writer.option("overwriteSchema", True)
-    writer.save(path)
+        frame.write.format("delta").mode("overwrite").option("overwriteSchema", True).saveAsTable(target)
+    elif format == "parquet":
+        path = Path(target)
+        if not target.startswith("/Volumes/") or ".." in path.parts or path.suffix != ".parquet":
+            raise ValueError("Parquet output must be a .parquet file inside a managed volume")
+        # One file keeps the ten-row course example easy to copy from ADF to Azure.
+        parts = Path(target + ".parts")
+        frame.coalesce(1).write.mode("overwrite").parquet(str(parts))
+        files = list(parts.glob("part-*.parquet"))
+        if len(files) != 1:
+            raise ValueError("Expected one Parquet part for the small course dataset")
+        shutil.copyfile(files[0], path)
+    else:
+        raise ValueError("Use delta or parquet")

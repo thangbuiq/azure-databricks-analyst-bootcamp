@@ -1,18 +1,19 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # Sales: Bronze → Silver → Gold → Parquet
-# MAGIC Run each cell online in Databricks. SQL handles transformations; utils handles storage.
+# MAGIC Run each cell online on Serverless. Delta tables and files use Unity Catalog.
+# MAGIC Deployment stages the Azure source in a volume; ADF copies the finished report back to Azure.
 
 # COMMAND ----------
 # ruff: noqa: F821
 import json
 
-from utils import setup_storage, write_data
+from utils import setup_parameters, write_data
 
 # Deployment fills these non-secret widget defaults from the root .env.
 DEFAULT_PARAMETERS = {}
-params = setup_storage(spark, dbutils, DEFAULT_PARAMETERS)
-lakehouse = params["lakehouse_path"].rstrip("/")
+params = setup_parameters(spark, dbutils, DEFAULT_PARAMETERS)
+tables = params["table_prefix"]
 
 # COMMAND ----------
 # MAGIC %md
@@ -26,8 +27,8 @@ bronze = (
     .csv(params["raw_path"])
 )
 assert bronze.count() == 10, "Expected 10 source rows"
-write_data(bronze, f"{lakehouse}/bronze")
-spark.read.format("delta").load(f"{lakehouse}/bronze").createOrReplaceTempView("bronze_sales")
+write_data(bronze, f"{tables}_bronze")
+spark.table(f"{tables}_bronze").createOrReplaceTempView("bronze_sales")
 
 # COMMAND ----------
 # MAGIC %md
@@ -46,8 +47,8 @@ silver = spark.sql("""
              AS DECIMAL(24, 2)) AS revenue
     FROM bronze_sales
 """)
-write_data(silver, f"{lakehouse}/silver")
-spark.read.format("delta").load(f"{lakehouse}/silver").createOrReplaceTempView("silver_sales")
+write_data(silver, f"{tables}_silver")
+spark.table(f"{tables}_silver").createOrReplaceTempView("silver_sales")
 
 # COMMAND ----------
 # MAGIC %md
@@ -62,7 +63,7 @@ gold = spark.sql("""
     FROM silver_sales
     GROUP BY sale_date, category
 """)
-write_data(gold, f"{lakehouse}/gold")
+write_data(gold, f"{tables}_gold")
 
 # COMMAND ----------
 # MAGIC %md
@@ -70,7 +71,7 @@ write_data(gold, f"{lakehouse}/gold")
 # MAGIC Expect 10 sales, 55 units and 550.00 revenue across two categories.
 
 # COMMAND ----------
-gold = spark.read.format("delta").load(f"{lakehouse}/gold")
+gold = spark.table(f"{tables}_gold")
 write_data(gold, params["report_path"], format="parquet")
 report = spark.read.parquet(params["report_path"])
 report.createOrReplaceTempView("sales_report")

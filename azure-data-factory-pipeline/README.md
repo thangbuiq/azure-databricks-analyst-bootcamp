@@ -2,11 +2,11 @@
 
 Each file in `src/adf/defs/` defines **one complete pipeline**: its activities, parameters, and dependencies. Shared Databricks connection settings live in `src/adf/connections.py`.
 
-The entry point is `pl_master_etl`. It waits for `pl_sales_pipeline` to execute the Databricks notebook successfully, then calls `pl_demo_pipeline`, a one-second dummy activity students can replace.
+The entry point is `pl_master_etl`. It waits for `pl_sales_pipeline` to execute the Databricks notebook and copy its report successfully, then calls `pl_demo_pipeline`, a one-second dummy activity students can replace.
 
 ```text
 pl_master_etl
-  ├─ pl_sales_pipeline → serverless Databricks job
+  ├─ pl_sales_pipeline → serverless job via Jobs API → copy volume report to Azure
   └─ pl_demo_pipeline  → dummy wait (after sales succeeds)
 ```
 
@@ -35,7 +35,7 @@ Every definition exports:
 - `NAME`: a unique ADF pipeline name.
 - `build_pipeline(settings)`: returns the complete Azure SDK `PipelineResource`. `settings` contains the root `.env` configuration; it can be unused for a simple example.
 
-The sales definition triggers a Databricks Job deployed by the provisioner. For other job definitions, copy its DatabricksJobActivity pattern. For pipeline dependencies, follow `pl_master_etl.py`: call a child pipeline with `wait_on_completion=True`, then specify a `Succeeded` dependency for the next activity. Use `settings.notebook_workspace_path("your_notebook")` for the notebook activity path inside the configured folder.
+The sales definition triggers a Databricks Job deployed by the provisioner. For other job definitions, copy its Web activity start/poll/result-check pattern. For pipeline dependencies, follow `pl_master_etl.py`: call a child pipeline with `wait_on_completion=True`, then specify a `Succeeded` dependency for the next activity. Notebook paths belong to the Databricks job tasks configured in `provisioner/databricks.py`; use `settings.notebook_workspace_path("your_notebook")` there. Adding a pipeline definition alone does not create another Databricks job.
 
 ## 2. Import and register it
 

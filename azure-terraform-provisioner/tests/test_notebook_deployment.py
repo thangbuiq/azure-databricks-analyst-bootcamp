@@ -5,7 +5,7 @@ from dataclasses import replace
 from unittest.mock import Mock
 
 
-def test_upload_uses_databricks_secret_for_storage_key(tmp_path, monkeypatch):
+def test_upload_stages_source_in_volume_without_notebook_credentials(tmp_path, monkeypatch):
     from databricks.sdk.service import jobs as job_models
 
     from provisioner import databricks
@@ -19,16 +19,15 @@ def test_upload_uses_databricks_secret_for_storage_key(tmp_path, monkeypatch):
         storage_account="demostorage",
     )
     client = Mock()
+    monkeypatch.setattr(databricks, "download_fixture", lambda *args: b"sale_id\n1\n")
     monkeypatch.setattr(databricks, "workspace_client", lambda *args: client)
     client.jobs.list.return_value = []
     client.jobs.create.return_value = Mock(job_id=123)
     resources = {"storage_account_key": "private-storage-key"}
     assert databricks.deploy_notebooks(settings, resources) == "123"
-    client.secrets.put_secret.assert_called_once_with(
-        scope=settings.secret_scope,
-        key="storage-account-key",
-        string_value="private-storage-key",
-    )
+    client.secrets.put_secret.assert_not_called()
+    assert client.files.upload.call_args.args[0] == settings.volume_path + "/raw/sales.csv"
+    assert client.files.upload.call_args.args[1].getvalue() == b"sale_id\n1\n"
     uploads = {call.kwargs["path"]: call.kwargs for call in client.workspace.upload.call_args_list}
     upload = uploads[settings.notebook_path + "/sales_demo"]
     source = upload["content"].decode()
@@ -39,13 +38,13 @@ def test_upload_uses_databricks_secret_for_storage_key(tmp_path, monkeypatch):
         and any(isinstance(target, ast.Name) and target.id == "DEFAULT_PARAMETERS" for target in node.targets)
     )
     values = ast.literal_eval(defaults.value)
-    assert values["storage_account"] == "demostorage"
-    assert values["raw_path"].endswith("/sales/sales.csv")
-    assert values["secret_scope"] == settings.secret_scope
+    assert values["raw_path"] == settings.volume_path + "/raw/sales.csv"
+    assert values["table_prefix"] == "workspace.default.analytics_demo_sales"
+    assert values["report_path"].startswith(settings.volume_path + "/reports/")
     assert "tenant_id" not in values and "client_id" not in values
     assert "private-secret" not in source
     assert "private-storage-key" not in source
-    assert "setup_storage(spark, dbutils, DEFAULT_PARAMETERS)" in source
+    assert "setup_parameters(spark, dbutils, DEFAULT_PARAMETERS)" in source
     assert upload["path"] == settings.notebook_path + "/sales_demo"
     uploads = {call.kwargs["path"]: call.kwargs for call in client.workspace.upload.call_args_list}
     utility_path = settings.notebook_path + "/utils.py"
@@ -77,6 +76,7 @@ def test_deploy_discovers_new_notebooks_and_utilities(tmp_path, monkeypatch):
     (source / "extra/second.py").write_text("# Databricks notebook source\nprint(2)\n")
     (source / "utils.py").write_text("VALUE = 10\n")
     client = Mock()
+    monkeypatch.setattr(databricks, "download_fixture", lambda *args: b"sale_id\n1\n")
     monkeypatch.setattr(databricks, "workspace_client", lambda *args: client)
     client.jobs.list.return_value = []
     client.jobs.create.return_value = Mock(job_id=456)
