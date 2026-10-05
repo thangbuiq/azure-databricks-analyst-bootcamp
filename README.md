@@ -13,6 +13,7 @@
   - [Orchestration Flow](#orchestration-flow)
   - [Tech Stack](#tech-stack)
   - [Setup and Run from Your Local Machine](#setup-and-run-from-your-local-machine)
+    - [0. Azure setup](#0-azure-setup)
     - [1. Prepare the environment](#1-prepare-the-environment)
     - [2. Configure `.env`](#2-configure-env)
     - [3. Provision and deploy](#3-provision-and-deploy)
@@ -91,6 +92,10 @@ sequenceDiagram
 
 ## Setup and Run from Your Local Machine
 
+### 0. Azure setup
+
+For Azure permissions, the values needed in `.env`, provisioning, deployment, and cleanup, follow the [Azure setup guide](AZURE.md).
+
 ### 1. Prepare the environment
 
 Install **Python 3.12** and **[uv](https://docs.astral.sh/uv/getting-started/installation/)**. From the repository root:
@@ -103,6 +108,8 @@ cp .env.example .env
 On PowerShell, use `Copy-Item .env.example .env`. Preserve an existing `.env` when updating the repository.
 
 Spark and Delta Lake run in Databricks; local Java and Spark installations are not required. Terraform is downloaded and verified automatically by the provisioning command.
+
+For Azure credentials and permissions, follow the [Azure setup guide](AZURE.md).
 
 ### 2. Configure `.env`
 
