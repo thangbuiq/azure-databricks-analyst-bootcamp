@@ -4,7 +4,7 @@ This guide explains the Azure access and setup needed for this repository. Azure
 
 ## What gets created
 
-The provisioner creates the resource group, an Azure Storage account with `raw`, `lakehouse`, and `reports` containers, the storage role assignment, and an Azure Data Factory. The default region, resource group, and factory name are in [config.py](azure-terraform-provisioner/src/provisioner/config.py). The storage account and Data Factory names come from your root `.env`.
+The provisioner creates the resource group, an Azure Storage account with `raw`, `lakehouse`, and `reports` containers, the storage role assignment, and an Azure Data Factory. The default region is Japan East (`japaneast`). The region, resource group, and factory name are in [config.py](azure-terraform-provisioner/src/provisioner/config.py). The storage account and Data Factory names come from your root `.env`.
 
 This does not create a Databricks workspace. Use your existing Databricks Free Edition workspace. Azure Storage and Data Factory can incur charges; delete the demo resource group when you finish.
 

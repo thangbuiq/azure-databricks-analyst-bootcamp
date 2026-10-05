@@ -27,7 +27,7 @@ class Settings:
     client_id: str = ""
     client_secret: str = field(default="", repr=False)
     principal_object_id: str = ""
-    location: str = "southeastasia"
+    location: str = "japaneast"
     resource_group: str = "rg-analytics-demo"
     storage_account: str = ""
     factory_name: str = "adf-analytics-demo"
