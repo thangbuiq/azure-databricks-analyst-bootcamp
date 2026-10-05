@@ -75,13 +75,6 @@ The output includes credentials that you must protect. Be sure that you do not i
   "galleryEndpointUrl": "https://gallery.azure.com/",
   "managementEndpointUrl": "https://management.core.windows.net/"
 }
-
-az ad app list --display-name "course-sp" --query "[].{appId:appId,objectId:objectId,displayName:displayName}" -o table
-AppId                                 DisplayName
-------------------------------------  -------------
-b1deb2ac-82f1-4fc2-a331-39aa15728f1e  course-sp
-
-
 ```
 
 ## Provision Azure resources
