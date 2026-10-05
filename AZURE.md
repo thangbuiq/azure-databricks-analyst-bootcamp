@@ -26,11 +26,11 @@ Copy `.env.example` to `.env` from the repository root. Fill the Azure entries b
 |---|---|
 | `AZURE_SUBSCRIPTION_ID` | Azure Portal → **Subscriptions** → your subscription → **Subscription ID**. |
 | `AZURE_TENANT_ID` | Azure Portal → **Microsoft Entra ID** → **Overview** → **Tenant ID**. The [Azure portal guide](https://learn.microsoft.com/en-us/azure/azure-portal/get-subscription-tenant-id) shows both IDs. |
-| `AZURE_CLIENT_ID` | The service principal's **Application (client) ID**. |
-| `AZURE_CLIENT_SECRET` | A client secret created for that application. Copy its **Value** when it is created; the portal will not show it again. Do not use the Secret ID. |
-| `AZURE_PRINCIPAL_OBJECT_ID` | The service principal's **Object ID** under **Microsoft Entra ID → Enterprise applications**. This is different from its client ID. |
-| `STORAGE_ACCOUNT` | A new globally unique name, 3–24 lowercase letters or numbers. The provisioner creates it. |
-| `DATA_FACTORY` | A globally unique name for the Data Factory. The provisioner creates it. |
+| `AZURE_CLIENT_ID` | App registrations → Overview → **Application (client) ID** |
+| `AZURE_CLIENT_SECRET` | App registrations → Certificates & secrets → new secret → copy **Value** |
+| `AZURE_PRINCIPAL_OBJECT_ID` | Enterprise applications → select app → Object ID (or az ad sp show --id <CLIENT_ID> --query objectId) |
+| `STORAGE_ACCOUNT` | Storage accounts → Overview → Name (or --name used when creating). |
+| `DATA_FACTORY` | Data factories → Overview → Name (or --name used when creating). |
 
 Do not create the storage account or Data Factory manually. Terraform creates them using the names in `.env`; a name collision means you should choose another name.
 
