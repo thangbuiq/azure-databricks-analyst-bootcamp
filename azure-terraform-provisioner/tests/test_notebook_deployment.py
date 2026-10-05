@@ -31,6 +31,19 @@ def test_upload_has_interactive_defaults_without_exposing_the_secret(tmp_path, m
     assert values["storage_account"] == "demostorage"
     assert values["raw_path"].endswith("/sales/sales.csv")
     assert "private-secret" not in source
-    assert "DEFAULT_PARAMETERS.get(name" in source
+    assert "setup_storage(spark, dbutils, DEFAULT_PARAMETERS)" in source
     assert upload["path"] == settings.notebook_path
     assert client.secrets.put_acl.call_args.kwargs["principal"] == "adf-id"
+    uploads = {call.kwargs["path"]: call.kwargs for call in client.workspace.upload.call_args_list}
+    utility_path = settings.notebook_path.rsplit("/", 1)[0] + "/utils.py"
+    utility = uploads[utility_path]
+    assert utility["format"].value == "AUTO"
+    assert not utility["content"].startswith(b"# Databricks notebook source")
+    assert "from utils import" in source
+    assert "private-secret" not in utility["content"].decode()
+    permissions = client.workspace.update_permissions.call_args_list
+    assert any(
+        call.kwargs["workspace_object_type"] == "files"
+        and call.kwargs["access_control_list"][0].permission_level.value == "CAN_READ"
+        for call in permissions
+    )

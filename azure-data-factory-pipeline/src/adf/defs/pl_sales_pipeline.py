@@ -5,7 +5,7 @@ from azure.mgmt.datafactory import models as m
 from adf.connections import LINKED_SERVICE_NAME
 from provisioner.config import notebook_parameters
 
-NAME = "pl_sales_job"
+NAME = "pl_sales_pipeline"
 
 
 def build_pipeline(settings) -> m.PipelineResource:

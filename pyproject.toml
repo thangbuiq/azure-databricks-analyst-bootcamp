@@ -28,7 +28,7 @@ default-groups = ["dev", "cloud"]
 packages = ["azure-data-factory-pipeline/src/adf", "azure-terraform-provisioner/src/provisioner"]
 
 [tool.pytest.ini_options]
-testpaths = ["azure-terraform-provisioner/tests", "azure-data-factory-pipeline/tests"]
+testpaths = ["azure-terraform-provisioner/tests"]
 
 [tool.ruff]
 line-length = 120

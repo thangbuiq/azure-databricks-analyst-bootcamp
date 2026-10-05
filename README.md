@@ -40,7 +40,7 @@ Students develop, execute, and test notebooks **online in the Databricks workspa
 |---|---|
 | `azure-terraform-provisioner/` | Azure infrastructure managed by Terraform and automated through Python |
 | `azure-data-factory-pipeline/` | Complete Python pipeline definitions in `src/adf/defs/` (one file per pipeline), with shared connection and deployment helpers |
-| `databricks-etl-pipeline/` | Dummy source data and PySpark transformation notebooks under `src/notebooks/` |
+| `databricks-etl-pipeline/` | Dummy source data, SQL-based PySpark notebooks and shared write utilities under `src/notebooks/` |
 | `powerbi-business-report/` | Power BI reporting layer consuming the exported Parquet data |
 
 See [adding pipeline definitions](azure-data-factory-pipeline/README.md) for the import-and-register workflow.
@@ -51,8 +51,9 @@ See [adding pipeline definitions](azure-data-factory-pipeline/README.md) for the
 
 ```mermaid
 sequenceDiagram
-    participant Parent as Parent ADF Pipeline
+    participant Parent as Master ADF Pipeline
     participant Child as Notebook ADF Pipeline
+    participant Demo as Demo ADF Pipeline
     participant Notebook as Databricks Notebook
     participant Blob as Azure Blob Storage
     participant PBI as Power BI
@@ -63,7 +64,9 @@ sequenceDiagram
     Note over Notebook: Bronze → Silver → Gold using Spark and Delta Lake
     Notebook->>Blob: Export Gold as Parquet
     Notebook-->>Child: Execution result
-    Child-->>Parent: Continue dependent activity on success
+    Child-->>Parent: Success
+    Parent->>Demo: Execute Pipeline and wait for completion
+    Demo-->>Parent: Execution result
     Note over PBI: Refresh reads the exported Parquet data
 ```
 
@@ -128,7 +131,7 @@ Keep `.env` private. It is Git-ignored. Authentication secrets are stored in a D
 uv run solution setup
 ```
 
-This command automatically runs Terraform, provisions the Azure resources, uploads the ten-row source CSV and notebook, and creates the ADF connections and pipeline definitions. The uploaded notebook receives non-secret widget defaults from `.env` so it can also run interactively in the workspace.
+This command automatically runs Terraform, provisions the Azure resources, uploads the ten-row source CSV, notebook and shared Python utility, and creates the ADF connections and pipeline definitions. The uploaded notebook receives non-secret widget defaults from `.env` so it can also run interactively in the workspace.
 
 **Setup creates billable Azure resources and applies infrastructure changes automatically.** Keep the Terraform state files in `azure-terraform-provisioner/`; they are required to update and clean up the same deployment. Do not reuse that state with another deployment's configuration.
 
@@ -140,11 +143,11 @@ uv run solution deploy
 
 ### 4. Execute online
 
-Open the Databricks workspace and navigate to the notebook path configured in `.env`. Attach suitable **dedicated compute** and select **Run All**. The executing student account needs permission to run the notebook, use compute, and read the configured secret scope; the instructor grants these permissions once.
+Open the Databricks workspace and navigate to the notebook path configured in `.env`. Attach suitable **dedicated compute** and select **Run All**. The executing student account needs permission to run the notebook, read the utility file beside it, use compute, and read the configured secret scope; the instructor grants these permissions once.
 
-The source notebook is maintained in `databricks-etl-pipeline/src/notebooks/`. It executes the transformations and checks the resulting tables and Parquet output inside Databricks.
+The source notebook is maintained in `databricks-etl-pipeline/src/notebooks/`. Its cells use `spark.sql` and temporary views for the transformations, then check the resulting tables and Parquet output inside Databricks. The adjacent `utils.py` provides storage setup and `write_data(frame, path, format="delta")`; use `format="parquet"` for reporting exports. Deployment uploads this as a regular Python file beside the notebook so `from utils import setup_storage, write_data` works. See [Databricks module imports](https://learn.microsoft.com/en-us/azure/databricks/files/workspace-modules).
 
-To start the default ADF execution from your local machine:
+To start the master ADF pipeline from your local machine (it runs the notebook child, then the dummy child on success):
 
 ```bash
 uv run solution run-adf
@@ -166,7 +169,7 @@ uv run prek run --all-files
 uv run pytest
 ```
 
-Prek runs Ruff lint fixes and then `ruff format`, using the root `pyproject.toml`. For newly created, untracked files, use `uv run prek run --files path/to/file.py`. The small deployment tests do not start Spark or contact Azure; students validate transformations in the Databricks notebook.
+Prek runs Ruff lint fixes and then `ruff format`, using the root `pyproject.toml`. For newly created, untracked files, use `uv run prek run --files path/to/file.py`. The small provisioning tests do not start Spark or contact Azure; students validate transformations in the Databricks notebook.
 
 ### 6. Clean up Azure resources
 

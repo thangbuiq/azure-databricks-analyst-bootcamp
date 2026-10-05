@@ -95,7 +95,26 @@ def deploy_notebook(settings, resources) -> None:
         permission=workspace.AclPermission.READ,
     )
     client.workspace.mkdirs(path=settings.notebook_path.rsplit("/", 1)[0])
-    notebook = settings.root / "databricks-etl-pipeline/src/notebooks/sales_demo.py"
+    notebook_dir = settings.root / "databricks-etl-pipeline/src/notebooks"
+    utility_path = settings.notebook_path.rsplit("/", 1)[0] + "/utils.py"
+    client.workspace.upload(
+        path=utility_path,
+        content=(notebook_dir / "utils.py").read_bytes(),
+        format=workspace.ImportFormat.AUTO,
+        overwrite=True,
+    )
+    utility_info = client.workspace.get_status(path=utility_path)
+    client.workspace.update_permissions(
+        workspace_object_type="files",
+        workspace_object_id=str(utility_info.object_id),
+        access_control_list=[
+            workspace.WorkspaceObjectAccessControlRequest(
+                service_principal_name=resources["adf_client_id"],
+                permission_level=workspace.WorkspaceObjectPermissionLevel.CAN_READ,
+            )
+        ],
+    )
+    notebook = notebook_dir / "sales_demo.py"
     source = notebook.read_text()
     marker = "DEFAULT_PARAMETERS = {}"
     if source.count(marker) != 1:

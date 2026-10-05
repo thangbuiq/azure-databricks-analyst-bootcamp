@@ -5,6 +5,7 @@ import json
 import sys
 from pathlib import Path
 
+from adf.defs.pl_master_etl import NAME as MASTER_PIPELINE
 from adf.deploy import pipeline_names
 from provisioner.config import load_settings
 
@@ -42,7 +43,7 @@ def main(argv=None):
     run.add_argument(
         "pipeline",
         nargs="?",
-        default=names[0] if names else None,
+        default=MASTER_PIPELINE,
         choices=names,
     )
     status = commands.add_parser("status", help="Inspect an ADF run")

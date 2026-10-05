@@ -1,11 +1,5 @@
-"""Register complete pipeline definitions here in deployment order."""
+"""Register children before the master that calls them."""
 
-from adf.defs import (
-    pl_dependency_demo,
-    pl_sales_job,
-)
+from adf.defs import pl_demo_pipeline, pl_master_etl, pl_sales_pipeline
 
-PIPELINES = (
-    pl_sales_job,
-    pl_dependency_demo,
-)
+PIPELINES = (pl_sales_pipeline, pl_demo_pipeline, pl_master_etl)
