@@ -3,6 +3,7 @@
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlparse
 
 from dotenv import dotenv_values
 
@@ -29,14 +30,13 @@ class Settings:
     location: str = "southeastasia"
     resource_group: str = "rg-analytics-demo"
     storage_account: str = ""
-    workspace_name: str = "dbw-analytics-demo"
     factory_name: str = "adf-analytics-demo"
+    databricks_host: str = ""
     databricks_token: str = field(default="", repr=False)
-    runtime: str = "16.4.x-scala2.12"
-    node_type: str = "Standard_D4ds_v5"
+    databricks_job_name: str = "course-sales-etl"
+    databricks_job_id: str = ""
     notebook_path: str = "/Shared/analytics-demo"
     secret_scope: str = "analytics-demo"
-    policy_id: str = ""
 
     @property
     def notebook_source_dir(self):
@@ -46,10 +46,11 @@ class Settings:
         return f"{self.notebook_path.rstrip('/')}/{name}"
 
     def validate_databricks(self):
-        if not self.databricks_token:
-            raise ValueError(
-                "Set DATABRICKS_TOKEN in .env for the provisioned workspace, then run: uv run solution deploy"
-            )
+        if not self.databricks_host or not self.databricks_token:
+            raise ValueError("Set DATABRICKS_HOST and DATABRICKS_TOKEN in .env before deploying")
+        parsed = urlparse(self.databricks_host)
+        if parsed.scheme != "https" or not parsed.netloc:
+            raise ValueError("DATABRICKS_HOST must be an https workspace URL")
 
     @property
     def runtime_dir(self):
@@ -94,6 +95,7 @@ def load_settings(env_file: Path | None = None) -> Settings:
         principal_object_id=get("AZURE_PRINCIPAL_OBJECT_ID"),
         storage_account=get("STORAGE_ACCOUNT"),
         factory_name=get("DATA_FACTORY", defaults.factory_name),
+        databricks_host=get("DATABRICKS_HOST").rstrip("/"),
         databricks_token=get("DATABRICKS_TOKEN"),
         notebook_path=get("DATABRICKS_NOTEBOOK_PATH", defaults.notebook_path).rstrip("/"),
     )

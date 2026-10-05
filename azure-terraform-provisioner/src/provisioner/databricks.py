@@ -1,58 +1,61 @@
-"""Upload all teaching notebooks and configure ADF access."""
+"""Upload teaching notebooks and create the serverless ETL job."""
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import ResourceAlreadyExists
-from databricks.sdk.service import iam, workspace
+from databricks.sdk.service import jobs, workspace
 
 from provisioner.config import notebook_parameters
 
 
-def workspace_client(settings, resources):
+def workspace_client(settings, resources=None):
     settings.validate_databricks()
     return WorkspaceClient(
-        host=resources["workspace_url"],
+        host=settings.databricks_host,
         token=settings.databricks_token,
         auth_type="pat",
     )
 
 
-def ensure_adf_identity(settings, resources, client):
-    app_id = resources["adf_client_id"]
-    matches = list(client.service_principals.list(filter=f'applicationId eq "{app_id}"'))
-    if matches:
-        principal = matches[0]
-    else:
-        try:
-            principal = client.service_principals.create(
-                application_id=app_id,
-                display_name=f"{settings.factory_name}-databricks",
-                active=True,
-                entitlements=[
-                    iam.ComplexValue(value="workspace-access"),
-                    iam.ComplexValue(value="allow-cluster-create"),
-                ],
-            )
-        except Exception as exc:
-            raise RuntimeError(
-                "A Databricks administrator must add the ADF managed identity "
-                f"(application ID {app_id}) to this workspace. Use a workspace-admin token for deployment."
-            ) from exc
-    client.service_principals.patch(
-        id=principal.id,
-        schemas=[iam.PatchSchema.URN_IETF_PARAMS_SCIM_API_MESSAGES_2_0_PATCH_OP],
-        operations=[
-            iam.Patch(
-                op=iam.PatchOp.ADD,
-                path="entitlements",
-                value=[{"value": "allow-cluster-create"}],
+def _job_settings(settings):
+    return jobs.JobSettings(
+        name=settings.databricks_job_name,
+        description="Run the course sales notebook on Free Edition serverless compute.",
+        max_concurrent_runs=1,
+        performance_target=jobs.PerformanceTarget.STANDARD,
+        tasks=[
+            jobs.Task(
+                task_key="sales_etl",
+                notebook_task=jobs.NotebookTask(
+                    notebook_path=settings.notebook_workspace_path("sales_demo"),
+                    base_parameters=notebook_parameters(settings),
+                    source=jobs.Source.WORKSPACE,
+                ),
             )
         ],
     )
 
 
-def deploy_notebooks(settings, resources) -> None:
+def deploy_serverless_job(settings, client=None):
+    """Create or update the notebook job without defining classic cluster compute."""
+    client = client or workspace_client(settings)
+    job_settings = _job_settings(settings)
+    matches = [
+        job
+        for job in client.jobs.list(name=settings.databricks_job_name)
+        if job.settings.name == settings.databricks_job_name
+    ]
+    if len(matches) > 1:
+        raise ValueError(f"More than one Databricks job is named {settings.databricks_job_name!r}")
+    if matches:
+        job_id = matches[0].job_id
+        client.jobs.reset(job_id=job_id, new_settings=job_settings)
+        return str(job_id)
+    return str(client.jobs.create(**job_settings.as_dict()).job_id)
+
+
+def deploy_notebooks(settings, resources=None) -> str:
+    """Upload every notebook and utility, then return the serverless job ID."""
     client = workspace_client(settings, resources)
-    ensure_adf_identity(settings, resources, client)
     try:
         client.secrets.create_scope(scope=settings.secret_scope)
     except ResourceAlreadyExists:
@@ -62,18 +65,12 @@ def deploy_notebooks(settings, resources) -> None:
         key="storage-client-secret",
         string_value=settings.client_secret,
     )
-    client.secrets.put_acl(
-        scope=settings.secret_scope,
-        principal=resources["adf_client_id"],
-        permission=workspace.AclPermission.READ,
-    )
     for source_file in sorted(settings.notebook_source_dir.rglob("*.py")):
         source = source_file.read_text()
         is_notebook = source.startswith("# Databricks notebook source")
         relative_path = source_file.relative_to(settings.notebook_source_dir)
         if is_notebook:
             relative_path = relative_path.with_suffix("")
-            # Optional: notebooks using this marker receive non-secret widget defaults.
             source = source.replace(
                 "DEFAULT_PARAMETERS = {}", "DEFAULT_PARAMETERS = " + repr(notebook_parameters(settings))
             )
@@ -86,18 +83,4 @@ def deploy_notebooks(settings, resources) -> None:
             **({"language": workspace.Language.PYTHON} if is_notebook else {}),
             overwrite=True,
         )
-        info = client.workspace.get_status(path=destination)
-        client.workspace.update_permissions(
-            workspace_object_type="notebooks" if is_notebook else "files",
-            workspace_object_id=str(info.object_id),
-            access_control_list=[
-                workspace.WorkspaceObjectAccessControlRequest(
-                    service_principal_name=resources["adf_client_id"],
-                    permission_level=(
-                        workspace.WorkspaceObjectPermissionLevel.CAN_RUN
-                        if is_notebook
-                        else workspace.WorkspaceObjectPermissionLevel.CAN_READ
-                    ),
-                )
-            ],
-        )
+    return deploy_serverless_job(settings, client)

@@ -1,31 +1,23 @@
-"""Complete reference pipeline: run one Databricks notebook."""
+"""Run the deployed Databricks serverless job."""
 
 from azure.mgmt.datafactory import models as m
 
 from adf.connections import LINKED_SERVICE_NAME
-from provisioner.config import notebook_parameters
 
 NAME = "pl_sales_pipeline"
 
 
 def build_pipeline(settings) -> m.PipelineResource:
-    days, seconds = divmod(settings.timeout_seconds, 86400)
-    hours, seconds = divmod(seconds, 3600)
-    minutes, seconds = divmod(seconds, 60)
-    timeout = f"{days}.{hours:02}:{minutes:02}:{seconds:02}"
-
     return m.PipelineResource(
-        description="Reference: execute one complete PySpark notebook by workspace path.",
+        description="Run the sales ETL job using Databricks serverless compute.",
         concurrency=1,
         activities=[
-            m.DatabricksNotebookActivity(
-                name="run_sales_notebook",
+            m.DatabricksJobActivity(
+                name="run_sales_serverless_job",
                 linked_service_name=m.LinkedServiceReference(
                     type="LinkedServiceReference", reference_name=LINKED_SERVICE_NAME
                 ),
-                notebook_path=settings.notebook_workspace_path("sales_demo"),
-                base_parameters=notebook_parameters(settings),
-                policy=m.ActivityPolicy(timeout=timeout, retry=0),
+                job_id=settings.databricks_job_id,
             )
         ],
     )

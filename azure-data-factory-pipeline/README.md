@@ -6,7 +6,7 @@ The entry point is `pl_master_etl`. It waits for `pl_sales_pipeline` to execute 
 
 ```text
 pl_master_etl
-  ├─ pl_sales_pipeline → Databricks notebook
+  ├─ pl_sales_pipeline → serverless Databricks job
   └─ pl_demo_pipeline  → dummy wait (after sales succeeds)
 ```
 
@@ -35,7 +35,7 @@ Every definition exports:
 - `NAME`: a unique ADF pipeline name.
 - `build_pipeline(settings)`: returns the complete Azure SDK `PipelineResource`. `settings` contains the root `.env` configuration; it can be unused for a simple example.
 
-For notebook execution, copy the notebook activity pattern from `pl_sales_pipeline.py`. For pipeline dependencies, follow `pl_master_etl.py`: call a child pipeline with `wait_on_completion=True`, then specify a `Succeeded` dependency for the next activity. Use `settings.notebook_workspace_path("your_notebook")` for the notebook activity path inside the configured folder.
+The sales definition triggers a Databricks Job deployed by the provisioner. For other job definitions, copy its DatabricksJobActivity pattern. For pipeline dependencies, follow `pl_master_etl.py`: call a child pipeline with `wait_on_completion=True`, then specify a `Succeeded` dependency for the next activity. Use `settings.notebook_workspace_path("your_notebook")` for the notebook activity path inside the configured folder.
 
 ## 2. Import and register it
 

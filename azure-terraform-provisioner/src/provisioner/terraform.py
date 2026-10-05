@@ -60,7 +60,6 @@ def terraform_env(settings) -> dict[str, str]:
         "location",
         "resource_group",
         "storage_account",
-        "workspace_name",
         "factory_name",
         "principal_object_id",
     ):

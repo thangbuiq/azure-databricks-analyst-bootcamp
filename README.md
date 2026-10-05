@@ -1,6 +1,6 @@
 # azure-databricks-analyst-bootcamp
 
-> A hands-on Medallion-architecture bootcamp repo that takes Data Analysts from raw Azure Blob data to Power BI dashboards, using Databricks Spark, Delta Lake, and Azure Data Factory.
+> A hands-on Medallion-architecture bootcamp repo that takes Data Analysts from raw Azure Blob data to Power BI dashboards, using Databricks Free Edition serverless jobs, Delta Lake, and Azure Data Factory.
 
 ---
 
@@ -76,9 +76,9 @@ sequenceDiagram
 
 | Concern | Technology |
 |---|---|
-| Infrastructure | Azure resources provisioned with Terraform through Python |
+| Infrastructure | Azure Storage and Data Factory provisioned with Terraform through Python |
 | Source storage | Azure Blob Storage / ADLS Gen2 |
-| Compute / transform | Azure Databricks (PySpark notebooks) |
+| Compute / transform | Databricks Free Edition serverless jobs (PySpark notebooks) |
 | Storage format | Delta Lake (Bronze/Silver/Gold) |
 | Orchestration | Azure Data Factory, configured with Python |
 | BI export format | Parquet (Blob Storage) |
@@ -106,7 +106,7 @@ Spark and Delta Lake run in Databricks; local Java and Spark installations are n
 
 ### 2. Configure `.env`
 
-Use [.env.example](.env.example) as the configuration reference. Fill in these required values:
+Use [.env.example](.env.example) as the configuration reference. Fill in these values:
 
 | Variable | Description |
 |---|---|
@@ -114,50 +114,47 @@ Use [.env.example](.env.example) as the configuration reference. Fill in these r
 | `AZURE_TENANT_ID` | Microsoft Entra tenant ID |
 | `AZURE_CLIENT_ID` | Deployment service principal's application/client ID |
 | `AZURE_CLIENT_SECRET` | Deployment service principal's secret |
-| `AZURE_PRINCIPAL_OBJECT_ID` | Service principal object ID from Enterprise Applications, not the application registration object ID |
+| `AZURE_PRINCIPAL_OBJECT_ID` | Object ID for assigning storage access to the deployment service principal |
 | `STORAGE_ACCOUNT` | Globally unique storage account name: 3-24 lowercase letters/numbers |
+| `DATA_FACTORY` | Globally unique Data Factory name |
+| `DATABRICKS_HOST` | Full HTTPS URL from your Free Edition workspace browser |
+| `DATABRICKS_TOKEN` | Workspace access token used to deploy notebooks and the job |
 
-Also set `DATA_FACTORY` to a globally unique name and `DATABRICKS_NOTEBOOK_PATH` to the destination **folder**, for example `/Shared/analytics-demo`. After provisioning, set `DATABRICKS_TOKEN` to a token from that workspace.
+Set `DATABRICKS_NOTEBOOK_PATH` to a workspace folder such as `/Shared/analytics-demo`. Region, resource group, secret scope, serverless job name, and timeouts are configured in [config.py](azure-terraform-provisioner/src/provisioner/config.py).
 
-All remaining configuration lives in [config.py](azure-terraform-provisioner/src/provisioner/config.py): region, resource group, workspace name, runtime, node type, secret scope, compute policy and timeouts. Edit those defaults there when needed; no Terraform files or separate variable files need editing. Older optional environment keys for those settings are no longer read.
+The Azure service principal needs permission to provision the resource group, Storage, Data Factory, and the Storage Blob Data Contributor role assignment. The Databricks token account must be able to upload workspace files, create the storage secret scope, and create jobs in the Free Edition workspace. Keep both secrets private; neither is written into notebook source.
 
-The instructor prepares an identity with permission to create Azure resources and role assignments, such as **Contributor + User Access Administrator** in the training subscription, and to register resource providers when necessary. The Databricks token owner needs workspace administration permissions for notebook upload, secrets, and managed-identity setup.
+Free Edition supports serverless compute only. The deployed job leaves cluster settings out so it runs on serverless. Its fair usage limits apply, including the account's job concurrency quota. See [Free Edition limits](https://learn.microsoft.com/en-us/azure/databricks/getting-started/free-edition-limitations).
 
-If the Databricks account restricts workspace-level identity creation, ask the administrator to assign the ADF managed identity to the workspace. If setting `policy_id` in `config.py`, allow the ADF identity to use that compute policy.
-
-Keep `.env` private. It is Git-ignored. Authentication secrets are stored in a Databricks secret scope, not embedded in the notebook.
 
 ### 3. Provision and deploy
 
-For a new workspace, provision Azure first:
+First provision the Azure storage and Data Factory resources:
 
 ```bash
 uv run solution provision
 ```
 
-Open the workspace URL printed by that command, create a personal access token for an authorized workspace administrator, and put it in `DATABRICKS_TOKEN` in the same root `.env`. Then deploy:
+The command does not create a Databricks workspace. Use your existing Free Edition workspace URL in `DATABRICKS_HOST` and add its token to `DATABRICKS_TOKEN`, then deploy:
 
 ```bash
 uv run solution deploy
 ```
 
-Deployment discovers every Python file under `databricks-etl-pipeline/src/notebooks/` and uploads it beneath `DATABRICKS_NOTEBOOK_PATH`, preserving subfolders. Files starting with `# Databricks notebook source` become notebooks without the `.py` extension; other Python files remain importable utilities. Notebooks with `DEFAULT_PARAMETERS = {}` receive the course's non-secret widget defaults. Add another exported Python notebook to that directory and rerun the same command; there is no upload list to maintain.
+Deployment uploads every Python notebook and utility beneath `DATABRICKS_NOTEBOOK_PATH`, uploads the ten-row source CSV to Azure Storage, creates or updates the serverless Databricks job, and configures ADF to run that job. ADF's Databricks Job activity runs the job with serverless compute. See [ADF Databricks Job activity](https://learn.microsoft.com/en-us/azure/data-factory/transform-data-databricks-job).
 
-The command also uploads the ten-row CSV and updates ADF connections and registered pipelines. Databricks deployment uses [token authentication](https://databricks-sdk-py.readthedocs.io/en/stable/authentication.html); Azure provisioning uses the Azure credentials, and ADF notebook execution uses its managed identity.
+The Azure Storage account and Data Factory can incur Azure charges. Free Edition job execution uses Databricks serverless quotas.
 
-For an already provisioned workspace with its token configured, `uv run solution setup` combines infrastructure updates and deployment.
+For later infrastructure changes and deployment together, `uv run solution setup` requires the Databricks host and token already configured. Terraform retains its state under `azure-terraform-provisioner/`; use that same configuration to clean up resources.
 
-**Provisioning creates billable Azure resources and applies infrastructure changes automatically.** Keep the Terraform state files in `azure-terraform-provisioner/`; they are required to update and clean up the same deployment. Do not reuse that state with another deployment's configuration.
-
-If updating an older configuration, remove the notebook name from `DATABRICKS_NOTEBOOK_PATH` so it points to the containing folder. Deployment updates matching paths but does not delete old workspace objects.
 
 ### 4. Execute online
 
-Open the Databricks workspace and open a notebook inside the folder configured by `DATABRICKS_NOTEBOOK_PATH`. Attach suitable **dedicated compute** and select **Run All**. The executing student account needs permission to run the notebook, read the utility file beside it, use compute, and read the configured secret scope; the instructor grants these permissions once.
+Open the Databricks workspace and a notebook inside the folder configured by `DATABRICKS_NOTEBOOK_PATH`. Select **Serverless** compute, then **Run All**. The executing student account needs permission to read the notebook and utility file, use serverless compute, and read the configured secret scope.
 
 The source notebook is maintained in `databricks-etl-pipeline/src/notebooks/`. Its cells use `spark.sql` and temporary views for the transformations, then check the resulting tables and Parquet output inside Databricks. The adjacent `utils.py` provides storage setup and `write_data(frame, path, format="delta")`; use `format="parquet"` for reporting exports. Deployment uploads this as a regular Python file beside the notebook so `from utils import setup_storage, write_data` works. See [Databricks module imports](https://learn.microsoft.com/en-us/azure/databricks/files/workspace-modules).
 
-To start the master ADF pipeline from your local machine (it runs the notebook child, then the dummy child on success):
+To start the master ADF pipeline (the sales child runs its serverless Databricks job, then the dummy child runs on success):
 
 ```bash
 uv run solution run-adf

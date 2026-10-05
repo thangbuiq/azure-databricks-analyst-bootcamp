@@ -3,6 +3,7 @@
 import argparse
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from adf.defs.pl_master_etl import NAME as MASTER_PIPELINE
@@ -19,11 +20,12 @@ def _deploy(settings, resources):
     print("Uploading the 10-row CSV…", flush=True)
     upload_fixture(settings, settings.root / "databricks-etl-pipeline/data/sales.csv")
     print("Uploading all notebooks and utilities…", flush=True)
-    deploy_notebooks(settings, resources)
+    job_id = deploy_notebooks(settings, resources)
     print("Creating the ADF linked service and registered pipelines…", flush=True)
-    deploy_pipelines(settings, resources)
+    deploy_pipelines(replace(settings, databricks_job_id=job_id), resources)
     return {
-        "workspace_url": resources["workspace_url"],
+        "databricks_host": settings.databricks_host,
+        "databricks_job_id": job_id,
         "notebook_path": settings.notebook_path,
         "pipelines": list(pipeline_names()),
     }
@@ -34,7 +36,7 @@ def main(argv=None):
     parser.add_argument("--env", type=Path, help="Optional .env path (default: repository root)")
     commands = parser.add_subparsers(dest="command", required=True)
     for name, help_text in [
-        ("setup", "Provision Azure and upload the notebook, data and ADF pipelines"),
+        ("setup", "Provision Azure storage and Data Factory, then deploy the serverless job"),
         ("provision", "Provision Azure automatically through Terraform"),
         ("deploy", "Upload the notebook/data and update ADF pipelines"),
     ]:
