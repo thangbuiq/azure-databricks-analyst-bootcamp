@@ -83,7 +83,7 @@ sequenceDiagram
 | Orchestration | Azure Data Factory, configured with Python |
 | BI export format | Parquet (Blob Storage) |
 | BI / reporting | Power BI |
-| Configuration | One root `.env` file |
+| Configuration | Essential inputs in root `.env`; defaults in `config.py` |
 | Formatting | Prek and Ruff, configured at the repository root |
 | CI | GitHub Actions |
 
@@ -117,33 +117,43 @@ Use [.env.example](.env.example) as the configuration reference. Fill in these r
 | `AZURE_PRINCIPAL_OBJECT_ID` | Service principal object ID from Enterprise Applications, not the application registration object ID |
 | `STORAGE_ACCOUNT` | Globally unique storage account name: 3-24 lowercase letters/numbers |
 
-Review the region and resource names in `.env`. Choose a dedicated resource group and a globally unique Data Factory name. Databricks runtime, node type, notebook workspace path, secret scope, and execution timeout are also configurable there. No Terraform files or separate variable files need editing.
+Also set `DATA_FACTORY` to a globally unique name and `DATABRICKS_NOTEBOOK_PATH` to the destination **folder**, for example `/Shared/analytics-demo`. After provisioning, set `DATABRICKS_TOKEN` to a token from that workspace.
 
-The instructor prepares an identity with permission to create Azure resources and role assignments, such as **Contributor + User Access Administrator** in the training subscription, and to register resource providers when necessary. It also needs Databricks workspace administration permissions for notebook upload, secrets, and managed-identity setup.
+All remaining configuration lives in [config.py](azure-terraform-provisioner/src/provisioner/config.py): region, resource group, workspace name, runtime, node type, secret scope, compute policy and timeouts. Edit those defaults there when needed; no Terraform files or separate variable files need editing. Older optional environment keys for those settings are no longer read.
 
-If the Databricks account restricts workspace-level identity creation, set `DATABRICKS_ACCOUNT_ID` with an authorized account-admin identity, or ask the administrator to assign the ADF identity to the workspace. If using `DATABRICKS_POLICY_ID`, allow the ADF identity to use that compute policy.
+The instructor prepares an identity with permission to create Azure resources and role assignments, such as **Contributor + User Access Administrator** in the training subscription, and to register resource providers when necessary. The Databricks token owner needs workspace administration permissions for notebook upload, secrets, and managed-identity setup.
+
+If the Databricks account restricts workspace-level identity creation, ask the administrator to assign the ADF managed identity to the workspace. If setting `policy_id` in `config.py`, allow the ADF identity to use that compute policy.
 
 Keep `.env` private. It is Git-ignored. Authentication secrets are stored in a Databricks secret scope, not embedded in the notebook.
 
 ### 3. Provision and deploy
 
+For a new workspace, provision Azure first:
+
 ```bash
-uv run solution setup
+uv run solution provision
 ```
 
-This command automatically runs Terraform, provisions the Azure resources, uploads the ten-row source CSV, notebook and shared Python utility, and creates the ADF connections and pipeline definitions. The uploaded notebook receives non-secret widget defaults from `.env` so it can also run interactively in the workspace.
-
-**Setup creates billable Azure resources and applies infrastructure changes automatically.** Keep the Terraform state files in `azure-terraform-provisioner/`; they are required to update and clean up the same deployment. Do not reuse that state with another deployment's configuration.
-
-To update the notebook, data, and ADF definitions after provisioning:
+Open the workspace URL printed by that command, create a personal access token for an authorized workspace administrator, and put it in `DATABRICKS_TOKEN` in the same root `.env`. Then deploy:
 
 ```bash
 uv run solution deploy
 ```
 
+Deployment discovers every Python file under `databricks-etl-pipeline/src/notebooks/` and uploads it beneath `DATABRICKS_NOTEBOOK_PATH`, preserving subfolders. Files starting with `# Databricks notebook source` become notebooks without the `.py` extension; other Python files remain importable utilities. Notebooks with `DEFAULT_PARAMETERS = {}` receive the course's non-secret widget defaults. Add another exported Python notebook to that directory and rerun the same command; there is no upload list to maintain.
+
+The command also uploads the ten-row CSV and updates ADF connections and registered pipelines. Databricks deployment uses [token authentication](https://databricks-sdk-py.readthedocs.io/en/stable/authentication.html); Azure provisioning uses the Azure credentials, and ADF notebook execution uses its managed identity.
+
+For an already provisioned workspace with its token configured, `uv run solution setup` combines infrastructure updates and deployment.
+
+**Provisioning creates billable Azure resources and applies infrastructure changes automatically.** Keep the Terraform state files in `azure-terraform-provisioner/`; they are required to update and clean up the same deployment. Do not reuse that state with another deployment's configuration.
+
+If updating an older configuration, remove the notebook name from `DATABRICKS_NOTEBOOK_PATH` so it points to the containing folder. Deployment updates matching paths but does not delete old workspace objects.
+
 ### 4. Execute online
 
-Open the Databricks workspace and navigate to the notebook path configured in `.env`. Attach suitable **dedicated compute** and select **Run All**. The executing student account needs permission to run the notebook, read the utility file beside it, use compute, and read the configured secret scope; the instructor grants these permissions once.
+Open the Databricks workspace and open a notebook inside the folder configured by `DATABRICKS_NOTEBOOK_PATH`. Attach suitable **dedicated compute** and select **Run All**. The executing student account needs permission to run the notebook, read the utility file beside it, use compute, and read the configured secret scope; the instructor grants these permissions once.
 
 The source notebook is maintained in `databricks-etl-pipeline/src/notebooks/`. Its cells use `spark.sql` and temporary views for the transformations, then check the resulting tables and Parquet output inside Databricks. The adjacent `utils.py` provides storage setup and `write_data(frame, path, format="delta")`; use `format="parquet"` for reporting exports. Deployment uploads this as a regular Python file beside the notebook so `from utils import setup_storage, write_data` works. See [Databricks module imports](https://learn.microsoft.com/en-us/azure/databricks/files/workspace-modules).
 
@@ -173,10 +183,10 @@ Prek runs Ruff lint fixes and then `ruff format`, using the root `pyproject.toml
 
 ### 6. Clean up Azure resources
 
-Use the exact resource group from `.env`:
+Use the exact `resource_group` from `config.py`:
 
 ```bash
 uv run solution cleanup --confirm-resource-group YOUR_RESOURCE_GROUP
 ```
 
-Cleanup verifies the group against Terraform state before destroying its managed resources, including stored demo data. Any Databricks account-level identity registration may require separate administrator cleanup if no longer used.
+Cleanup verifies the group against Terraform state before destroying its managed resources, including stored demo data.

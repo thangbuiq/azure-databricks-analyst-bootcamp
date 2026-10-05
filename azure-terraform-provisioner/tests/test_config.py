@@ -30,11 +30,15 @@ def test_settings_repr_redacts_secrets(tmp_path):
     from provisioner.config import load_settings
 
     env = tmp_path / ".env"
-    env.write_text("AZURE_CLIENT_SECRET=never-print-me\n")
+    env.write_text("AZURE_CLIENT_SECRET=never-print-me\nDATABRICKS_TOKEN=never-print-token\n")
     assert "never-print-me" not in repr(load_settings(env))
+    assert "never-print-token" not in repr(load_settings(env))
+    assert load_settings(env).databricks_token == "never-print-token"
 
 
-@pytest.mark.parametrize("line", ["POLL_SECONDS=0", "TIMEOUT_SECONDS=-1", "STORAGE_ACCOUNT=UPPER"])
+@pytest.mark.parametrize(
+    "line", ["DATABRICKS_NOTEBOOK_PATH=/", "DATABRICKS_NOTEBOOK_PATH=/Shared/../bad", "STORAGE_ACCOUNT=UPPER"]
+)
 def test_invalid_settings(tmp_path, line):
     from provisioner.config import load_settings
 

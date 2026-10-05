@@ -1,6 +1,6 @@
-"""Upload the teaching notebook and configure ADF access."""
+"""Upload all teaching notebooks and configure ADF access."""
 
-from databricks.sdk import AccountClient, WorkspaceClient
+from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import ResourceAlreadyExists
 from databricks.sdk.service import iam, workspace
 
@@ -8,13 +8,11 @@ from provisioner.config import notebook_parameters
 
 
 def workspace_client(settings, resources):
+    settings.validate_databricks()
     return WorkspaceClient(
         host=resources["workspace_url"],
-        azure_workspace_resource_id=resources["workspace_resource_id"],
-        azure_tenant_id=settings.tenant_id,
-        azure_client_id=settings.client_id,
-        azure_client_secret=settings.client_secret,
-        auth_type="azure-client-secret",
+        token=settings.databricks_token,
+        auth_type="pat",
     )
 
 
@@ -23,30 +21,6 @@ def ensure_adf_identity(settings, resources, client):
     matches = list(client.service_principals.list(filter=f'applicationId eq "{app_id}"'))
     if matches:
         principal = matches[0]
-    elif settings.account_id:
-        account = AccountClient(
-            host="https://accounts.azuredatabricks.net",
-            account_id=settings.account_id,
-            azure_tenant_id=settings.tenant_id,
-            azure_client_id=settings.client_id,
-            azure_client_secret=settings.client_secret,
-            auth_type="azure-client-secret",
-        )
-        principals = list(account.service_principals.list(filter=f'applicationId eq "{app_id}"'))
-        principal = (
-            principals[0]
-            if principals
-            else account.service_principals.create(
-                application_id=app_id,
-                display_name=f"{settings.factory_name}-databricks",
-                active=True,
-            )
-        )
-        account.workspace_assignment.update(
-            workspace_id=int(resources["workspace_id"]),
-            principal_id=int(principal.id),
-            permissions=[iam.WorkspacePermission.USER],
-        )
     else:
         try:
             principal = client.service_principals.create(
@@ -61,8 +35,7 @@ def ensure_adf_identity(settings, resources, client):
         except Exception as exc:
             raise RuntimeError(
                 "A Databricks administrator must add the ADF managed identity "
-                f"(application ID {app_id}) to this workspace, or set DATABRICKS_ACCOUNT_ID "
-                "and grant the deployer account-admin access. See README identity setup."
+                f"(application ID {app_id}) to this workspace. Use a workspace-admin token for deployment."
             ) from exc
     client.service_principals.patch(
         id=principal.id,
@@ -77,7 +50,7 @@ def ensure_adf_identity(settings, resources, client):
     )
 
 
-def deploy_notebook(settings, resources) -> None:
+def deploy_notebooks(settings, resources) -> None:
     client = workspace_client(settings, resources)
     ensure_adf_identity(settings, resources, client)
     try:
@@ -94,47 +67,37 @@ def deploy_notebook(settings, resources) -> None:
         principal=resources["adf_client_id"],
         permission=workspace.AclPermission.READ,
     )
-    client.workspace.mkdirs(path=settings.notebook_path.rsplit("/", 1)[0])
-    notebook_dir = settings.root / "databricks-etl-pipeline/src/notebooks"
-    utility_path = settings.notebook_path.rsplit("/", 1)[0] + "/utils.py"
-    client.workspace.upload(
-        path=utility_path,
-        content=(notebook_dir / "utils.py").read_bytes(),
-        format=workspace.ImportFormat.AUTO,
-        overwrite=True,
-    )
-    utility_info = client.workspace.get_status(path=utility_path)
-    client.workspace.update_permissions(
-        workspace_object_type="files",
-        workspace_object_id=str(utility_info.object_id),
-        access_control_list=[
-            workspace.WorkspaceObjectAccessControlRequest(
-                service_principal_name=resources["adf_client_id"],
-                permission_level=workspace.WorkspaceObjectPermissionLevel.CAN_READ,
+    for source_file in sorted(settings.notebook_source_dir.rglob("*.py")):
+        source = source_file.read_text()
+        is_notebook = source.startswith("# Databricks notebook source")
+        relative_path = source_file.relative_to(settings.notebook_source_dir)
+        if is_notebook:
+            relative_path = relative_path.with_suffix("")
+            # Optional: notebooks using this marker receive non-secret widget defaults.
+            source = source.replace(
+                "DEFAULT_PARAMETERS = {}", "DEFAULT_PARAMETERS = " + repr(notebook_parameters(settings))
             )
-        ],
-    )
-    notebook = notebook_dir / "sales_demo.py"
-    source = notebook.read_text()
-    marker = "DEFAULT_PARAMETERS = {}"
-    if source.count(marker) != 1:
-        raise ValueError("Notebook default-parameter marker is missing or duplicated")
-    source = source.replace(marker, "DEFAULT_PARAMETERS = " + repr(notebook_parameters(settings)))
-    client.workspace.upload(
-        path=settings.notebook_path,
-        content=source.encode(),
-        format=workspace.ImportFormat.SOURCE,
-        language=workspace.Language.PYTHON,
-        overwrite=True,
-    )
-    info = client.workspace.get_status(path=settings.notebook_path)
-    client.workspace.update_permissions(
-        workspace_object_type="notebooks",
-        workspace_object_id=str(info.object_id),
-        access_control_list=[
-            workspace.WorkspaceObjectAccessControlRequest(
-                service_principal_name=resources["adf_client_id"],
-                permission_level=workspace.WorkspaceObjectPermissionLevel.CAN_RUN,
-            )
-        ],
-    )
+        destination = settings.notebook_workspace_path(relative_path.as_posix())
+        client.workspace.mkdirs(path=destination.rsplit("/", 1)[0])
+        client.workspace.upload(
+            path=destination,
+            content=source.encode(),
+            format=workspace.ImportFormat.SOURCE if is_notebook else workspace.ImportFormat.AUTO,
+            **({"language": workspace.Language.PYTHON} if is_notebook else {}),
+            overwrite=True,
+        )
+        info = client.workspace.get_status(path=destination)
+        client.workspace.update_permissions(
+            workspace_object_type="notebooks" if is_notebook else "files",
+            workspace_object_id=str(info.object_id),
+            access_control_list=[
+                workspace.WorkspaceObjectAccessControlRequest(
+                    service_principal_name=resources["adf_client_id"],
+                    permission_level=(
+                        workspace.WorkspaceObjectPermissionLevel.CAN_RUN
+                        if is_notebook
+                        else workspace.WorkspaceObjectPermissionLevel.CAN_READ
+                    ),
+                )
+            ],
+        )

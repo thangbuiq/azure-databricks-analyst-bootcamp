@@ -10,7 +10,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-TERRAFORM_VERSION = "1.11.4"
+from provisioner.config import TERRAFORM_VERSION
 
 
 def verify_archive(data: bytes, expected: str):

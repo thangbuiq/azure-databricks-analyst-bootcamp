@@ -12,13 +12,14 @@ from provisioner.config import load_settings
 
 def _deploy(settings, resources):
     from adf.deploy import deploy_pipelines
-    from provisioner.databricks import deploy_notebook
+    from provisioner.databricks import deploy_notebooks
     from provisioner.storage import upload_fixture
 
+    settings.validate_databricks()
     print("Uploading the 10-row CSV…", flush=True)
     upload_fixture(settings, settings.root / "databricks-etl-pipeline/data/sales.csv")
-    print("Uploading the notebook with defaults from .env…", flush=True)
-    deploy_notebook(settings, resources)
+    print("Uploading all notebooks and utilities…", flush=True)
+    deploy_notebooks(settings, resources)
     print("Creating the ADF linked service and registered pipelines…", flush=True)
     deploy_pipelines(settings, resources)
     return {
@@ -61,6 +62,8 @@ def main(argv=None):
             cleanup_resources(settings, args.confirm_resource_group)
             result = {"destroyed_resource_group": settings.resource_group}
         elif args.command in ("setup", "provision"):
+            if args.command == "setup":
+                settings.validate_databricks()
             result = provision_resources(settings)
             if args.command == "setup":
                 result = _deploy(settings, result)
@@ -83,7 +86,9 @@ def main(argv=None):
         print(json.dumps(result, indent=2, default=str))
     except Exception as error:
         message = str(error)
-        if settings and settings.client_secret:
-            message = message.replace(settings.client_secret, "[REDACTED]")
+        if settings:
+            for secret in (settings.client_secret, settings.databricks_token):
+                if secret:
+                    message = message.replace(secret, "[REDACTED]")
         print(f"Error: {message}", file=sys.stderr)
         raise SystemExit(1) from None

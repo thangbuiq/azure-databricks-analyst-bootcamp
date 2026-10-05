@@ -23,7 +23,7 @@ def build_pipeline(settings) -> m.PipelineResource:
                 linked_service_name=m.LinkedServiceReference(
                     type="LinkedServiceReference", reference_name=LINKED_SERVICE_NAME
                 ),
-                notebook_path=settings.notebook_path,
+                notebook_path=settings.notebook_workspace_path("sales_demo"),
                 base_parameters=notebook_parameters(settings),
                 policy=m.ActivityPolicy(timeout=timeout, retry=0),
             )

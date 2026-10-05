@@ -1,10 +1,12 @@
-"""One root .env; relative paths are anchored to its directory."""
+"""Configuration defaults live here; .env contains credentials and deployment inputs."""
 
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import dotenv_values
+
+TERRAFORM_VERSION = "1.11.4"
 
 
 def repository_root() -> Path:
@@ -29,12 +31,25 @@ class Settings:
     storage_account: str = ""
     workspace_name: str = "dbw-analytics-demo"
     factory_name: str = "adf-analytics-demo"
-    account_id: str = ""
+    databricks_token: str = field(default="", repr=False)
     runtime: str = "16.4.x-scala2.12"
     node_type: str = "Standard_D4ds_v5"
-    notebook_path: str = "/Shared/analytics-demo/sales_demo"
+    notebook_path: str = "/Shared/analytics-demo"
     secret_scope: str = "analytics-demo"
     policy_id: str = ""
+
+    @property
+    def notebook_source_dir(self):
+        return self.root / "databricks-etl-pipeline/src/notebooks"
+
+    def notebook_workspace_path(self, name):
+        return f"{self.notebook_path.rstrip('/')}/{name}"
+
+    def validate_databricks(self):
+        if not self.databricks_token:
+            raise ValueError(
+                "Set DATABRICKS_TOKEN in .env for the provisioned workspace, then run: uv run solution deploy"
+            )
 
     @property
     def runtime_dir(self):
@@ -69,33 +84,25 @@ def load_settings(env_file: Path | None = None) -> Settings:
     def get(key, default=""):
         return values.get(key) or default
 
+    defaults = Settings(root=repository_root())
     s = Settings(
-        root=repository_root(),
-        poll_seconds=int(get("POLL_SECONDS", "15")),
-        timeout_seconds=int(get("TIMEOUT_SECONDS", "3600")),
+        root=defaults.root,
         subscription_id=get("AZURE_SUBSCRIPTION_ID"),
         tenant_id=get("AZURE_TENANT_ID"),
         client_id=get("AZURE_CLIENT_ID"),
         client_secret=get("AZURE_CLIENT_SECRET"),
         principal_object_id=get("AZURE_PRINCIPAL_OBJECT_ID"),
-        location=get("AZURE_LOCATION", "southeastasia"),
-        resource_group=get("RESOURCE_GROUP", "rg-analytics-demo"),
         storage_account=get("STORAGE_ACCOUNT"),
-        workspace_name=get("DATABRICKS_WORKSPACE", "dbw-analytics-demo"),
-        factory_name=get("DATA_FACTORY", "adf-analytics-demo"),
-        account_id=get("DATABRICKS_ACCOUNT_ID"),
-        runtime=get("DATABRICKS_RUNTIME", "16.4.x-scala2.12"),
-        node_type=get("DATABRICKS_NODE_TYPE", "Standard_D4ds_v5"),
-        notebook_path=get("DATABRICKS_NOTEBOOK_PATH", "/Shared/analytics-demo/sales_demo"),
-        secret_scope=get("DATABRICKS_SECRET_SCOPE", "analytics-demo"),
-        policy_id=get("DATABRICKS_POLICY_ID"),
+        factory_name=get("DATA_FACTORY", defaults.factory_name),
+        databricks_token=get("DATABRICKS_TOKEN"),
+        notebook_path=get("DATABRICKS_NOTEBOOK_PATH", defaults.notebook_path).rstrip("/"),
     )
     if s.poll_seconds <= 0 or s.timeout_seconds <= 0:
-        raise ValueError("POLL_SECONDS and TIMEOUT_SECONDS must be positive")
+        raise ValueError("poll_seconds and timeout_seconds in config.py must be positive")
     if s.storage_account and not re.fullmatch(r"[a-z0-9]{3,24}", s.storage_account):
         raise ValueError("STORAGE_ACCOUNT must be 3-24 lowercase letters/numbers")
     if not s.notebook_path.startswith("/Shared/") or ".." in s.notebook_path.split("/"):
-        raise ValueError("DATABRICKS_NOTEBOOK_PATH must be a notebook below /Shared/")
+        raise ValueError("DATABRICKS_NOTEBOOK_PATH must be a folder below /Shared/")
     return s
 
 

@@ -4,7 +4,8 @@
 - Keep teaching transformation code in `databricks-etl-pipeline/src/notebooks/`.
 - Do not add local Spark runners, Java setup, local ETL test suites, or separate saved-job runners unless explicitly requested.
 - Keep `src/notebooks` focused on teaching notebooks and shared notebook utilities. Put instructor provisioning/upload helpers in `azure-terraform-provisioner/src/provisioner/`.
-- Retain Terraform, automated through Python and one root `.env`; students should not need to edit Terraform.
+- Retain Terraform, automated through Python. Keep credentials and essential inputs in one root `.env`, and configuration defaults in `provisioner/config.py`; students should not need to edit Terraform.
+- Deploy all Python notebooks and utilities from `src/notebooks/` together into the folder `DATABRICKS_NOTEBOOK_PATH`, using `DATABRICKS_TOKEN` for workspace authentication.
 - ADF is created with Python: `pl_master_etl` calls `pl_sales_pipeline`, then `pl_demo_pipeline` on success. The sales pipeline uses a native Databricks Notebook activity; the demo is a dummy child.
 - Keep provisioning tests small and beside their component, not at the repository root. Do not add ADF tests.
 - Use root `prek.toml` and root `pyproject.toml` for Ruff linting and formatting.

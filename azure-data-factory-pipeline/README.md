@@ -35,7 +35,7 @@ Every definition exports:
 - `NAME`: a unique ADF pipeline name.
 - `build_pipeline(settings)`: returns the complete Azure SDK `PipelineResource`. `settings` contains the root `.env` configuration; it can be unused for a simple example.
 
-For notebook execution, copy the notebook activity pattern from `pl_sales_pipeline.py`. For pipeline dependencies, follow `pl_master_etl.py`: call a child pipeline with `wait_on_completion=True`, then specify a `Succeeded` dependency for the next activity. The target notebook must already exist in the Databricks workspace.
+For notebook execution, copy the notebook activity pattern from `pl_sales_pipeline.py`. For pipeline dependencies, follow `pl_master_etl.py`: call a child pipeline with `wait_on_completion=True`, then specify a `Succeeded` dependency for the next activity. Use `settings.notebook_workspace_path("your_notebook")` for the notebook activity path inside the configured folder.
 
 ## 2. Import and register it
 
@@ -69,9 +69,9 @@ uv run solution run-adf  # Run the master
 uv run solution run-adf pl_example  # Run an individual pipeline
 ```
 
-The first command uploads the course notebook/data and creates or updates all registered ADF pipelines. The run commands execute a pipeline in Azure and wait for its result. You can also run it from ADF Studio.
+The first command uploads all course notebooks, utilities and data and creates or updates all registered ADF pipelines. The run commands execute a pipeline in Azure and wait for its result. You can also run it from ADF Studio.
 
-For a new transformation notebook, add it under `databricks-etl-pipeline/src/notebooks/`, upload it to the Databricks workspace, and point the new Notebook activity at its workspace path. Registering an ADF definition does not automatically upload additional notebooks; the setup helper uploads the existing course notebook and its adjacent `utils.py`. Keep that regular Python file beside notebooks that import it, and grant their executing identity read access. Students execute and validate Spark transformations online in Databricks.
+For a new transformation notebook, add a Python notebook starting with `# Databricks notebook source` under `databricks-etl-pipeline/src/notebooks/`. The deploy command automatically uploads all Python notebooks and shared utilities into the `DATABRICKS_NOTEBOOK_PATH` folder using `DATABRICKS_TOKEN`. Subfolders are preserved and notebook filenames lose `.py`; for example, `finance/report.py` is referenced as `settings.notebook_workspace_path("finance/report")`. Keep imported utilities beside their notebooks. Students execute and validate Spark transformations online in Databricks.
 
 Removing a module from `PIPELINES` stops future deployment of that definition; it does not delete a pipeline already deployed to Azure.
 
