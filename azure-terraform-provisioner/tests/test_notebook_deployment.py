@@ -5,7 +5,7 @@ from dataclasses import replace
 from unittest.mock import Mock
 
 
-def test_upload_has_interactive_defaults_without_exposing_the_secret(tmp_path, monkeypatch):
+def test_upload_uses_databricks_secret_for_storage_key(tmp_path, monkeypatch):
     from provisioner import databricks
     from provisioner.config import load_settings
 
@@ -20,7 +20,13 @@ def test_upload_has_interactive_defaults_without_exposing_the_secret(tmp_path, m
     monkeypatch.setattr(databricks, "workspace_client", lambda *args: client)
     client.jobs.list.return_value = []
     client.jobs.create.return_value = Mock(job_id=123)
-    assert databricks.deploy_notebooks(settings) == "123"
+    resources = {"storage_account_key": "private-storage-key"}
+    assert databricks.deploy_notebooks(settings, resources) == "123"
+    client.secrets.put_secret.assert_called_once_with(
+        scope=settings.secret_scope,
+        key="storage-account-key",
+        string_value="private-storage-key",
+    )
     uploads = {call.kwargs["path"]: call.kwargs for call in client.workspace.upload.call_args_list}
     upload = uploads[settings.notebook_path + "/sales_demo"]
     source = upload["content"].decode()
@@ -33,7 +39,10 @@ def test_upload_has_interactive_defaults_without_exposing_the_secret(tmp_path, m
     values = ast.literal_eval(defaults.value)
     assert values["storage_account"] == "demostorage"
     assert values["raw_path"].endswith("/sales/sales.csv")
+    assert values["secret_scope"] == settings.secret_scope
+    assert "tenant_id" not in values and "client_id" not in values
     assert "private-secret" not in source
+    assert "private-storage-key" not in source
     assert "setup_storage(spark, dbutils, DEFAULT_PARAMETERS)" in source
     assert upload["path"] == settings.notebook_path + "/sales_demo"
     uploads = {call.kwargs["path"]: call.kwargs for call in client.workspace.upload.call_args_list}
@@ -45,11 +54,11 @@ def test_upload_has_interactive_defaults_without_exposing_the_secret(tmp_path, m
     assert "private-secret" not in utility["content"].decode()
     job = client.jobs.create.call_args.kwargs
     assert job["name"] == settings.databricks_job_name
-    assert job["performance_target"].value == "STANDARD"
+    assert job["performance_target"] == "STANDARD"
     task = job["tasks"][0]
-    assert task.new_cluster is None and task.job_cluster_key is None
-    assert task.existing_cluster_id is None
-    assert task.notebook_task.notebook_path == settings.notebook_path + "/sales_demo"
+    assert "new_cluster" not in task and "job_cluster_key" not in task
+    assert "existing_cluster_id" not in task
+    assert task["notebook_task"]["notebook_path"] == settings.notebook_path + "/sales_demo"
 
 
 def test_deploy_discovers_new_notebooks_and_utilities(tmp_path, monkeypatch):
@@ -68,7 +77,7 @@ def test_deploy_discovers_new_notebooks_and_utilities(tmp_path, monkeypatch):
     monkeypatch.setattr(databricks, "workspace_client", lambda *args: client)
     client.jobs.list.return_value = []
     client.jobs.create.return_value = Mock(job_id=456)
-    assert databricks.deploy_notebooks(settings) == "456"
+    assert databricks.deploy_notebooks(settings, {"storage_account_key": "test-key"}) == "456"
     uploads = {call.kwargs["path"]: call.kwargs for call in client.workspace.upload.call_args_list}
     assert set(uploads) == {
         settings.notebook_path + "/first",

@@ -18,7 +18,11 @@ def _deploy(settings, resources):
 
     settings.validate_databricks()
     print("Uploading the 10-row CSV…", flush=True)
-    upload_fixture(settings, settings.root / "databricks-etl-pipeline/data/sales.csv")
+    upload_fixture(
+        settings,
+        settings.root / "databricks-etl-pipeline/data/sales.csv",
+        resources["storage_account_key"],
+    )
     print("Uploading all notebooks and utilities…", flush=True)
     job_id = deploy_notebooks(settings, resources)
     print("Creating the ADF linked service and registered pipelines…", flush=True)
@@ -58,7 +62,7 @@ def main(argv=None):
     try:
         settings = load_settings(args.env)
         settings.validate_cloud()
-        from provisioner.terraform import cleanup_resources, provision_resources, resources
+        from provisioner.terraform import cleanup_resources, provision_resources, public_resources, resources
 
         if args.command == "cleanup":
             cleanup_resources(settings, args.confirm_resource_group)
@@ -66,7 +70,8 @@ def main(argv=None):
         elif args.command in ("setup", "provision"):
             if args.command == "setup":
                 settings.validate_databricks()
-            result = provision_resources(settings)
+            provisioned = provision_resources(settings)
+            result = provisioned if args.command == "setup" else public_resources(provisioned)
             if args.command == "setup":
                 result = _deploy(settings, result)
         elif args.command == "deploy":

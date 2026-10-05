@@ -61,7 +61,6 @@ def terraform_env(settings) -> dict[str, str]:
         "resource_group",
         "storage_account",
         "factory_name",
-        "principal_object_id",
     ):
         env[f"TF_VAR_{name}"] = getattr(settings, name)
     return env
@@ -81,6 +80,11 @@ def _run(settings, *args, capture=False):
 
 def decode_outputs(value: str) -> dict:
     return {name: item["value"] for name, item in json.loads(value).items()}
+
+
+def public_resources(value: dict) -> dict:
+    """Keep account keys available to deployment code, never in CLI output."""
+    return {name: item for name, item in value.items() if name != "storage_account_key"}
 
 
 def resources(settings) -> dict:

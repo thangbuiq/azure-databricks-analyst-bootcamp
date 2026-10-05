@@ -1,4 +1,4 @@
-"""Upload the deterministic source fixture with Entra authentication."""
+"""Upload the deterministic source fixture with the demo storage account key."""
 
 import time
 
@@ -8,14 +8,14 @@ from azure.storage.blob import BlobServiceClient
 
 
 def credential(settings):
+    """Authenticate Azure management clients with the deployment service principal."""
     return ClientSecretCredential(settings.tenant_id, settings.client_id, settings.client_secret)
 
 
-def upload_fixture(settings, fixture_path):
-    with (
-        credential(settings) as auth,
-        BlobServiceClient(f"https://{settings.storage_account}.blob.core.windows.net", credential=auth) as service,
-    ):
+def upload_fixture(settings, fixture_path, storage_account_key):
+    with BlobServiceClient(
+        f"https://{settings.storage_account}.blob.core.windows.net", credential=storage_account_key
+    ) as service:
         client = service.get_blob_client("raw", "sales/sales.csv")
         for attempt in range(12):
             try:

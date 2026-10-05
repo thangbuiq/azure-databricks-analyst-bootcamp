@@ -26,7 +26,6 @@ class Settings:
     tenant_id: str = ""
     client_id: str = ""
     client_secret: str = field(default="", repr=False)
-    principal_object_id: str = ""
     location: str = "japaneast"
     resource_group: str = "rg-analytics-demo"
     storage_account: str = ""
@@ -62,7 +61,6 @@ class Settings:
             "AZURE_TENANT_ID": self.tenant_id,
             "AZURE_CLIENT_ID": self.client_id,
             "AZURE_CLIENT_SECRET": self.client_secret,
-            "AZURE_PRINCIPAL_OBJECT_ID": self.principal_object_id,
             "STORAGE_ACCOUNT": self.storage_account,
         }
         missing = [name for name, value in fields.items() if not value]
@@ -92,7 +90,6 @@ def load_settings(env_file: Path | None = None) -> Settings:
         tenant_id=get("AZURE_TENANT_ID"),
         client_id=get("AZURE_CLIENT_ID"),
         client_secret=get("AZURE_CLIENT_SECRET"),
-        principal_object_id=get("AZURE_PRINCIPAL_OBJECT_ID"),
         storage_account=get("STORAGE_ACCOUNT"),
         factory_name=get("DATA_FACTORY", defaults.factory_name),
         databricks_host=get("DATABRICKS_HOST").rstrip("/"),
@@ -115,7 +112,5 @@ def notebook_parameters(settings):
         "lakehouse_path": f"abfss://lakehouse@{account}/sales",
         "report_path": f"abfss://reports@{account}/sales",
         "storage_account": settings.storage_account,
-        "tenant_id": settings.tenant_id,
-        "client_id": settings.client_id,
         "secret_scope": settings.secret_scope,
     }

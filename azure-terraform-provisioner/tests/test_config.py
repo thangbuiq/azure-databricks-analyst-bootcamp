@@ -24,6 +24,7 @@ def test_missing_cloud_fields_are_reported_together(tmp_path):
         load_settings(tmp_path / ".env").validate_cloud()
     assert "AZURE_SUBSCRIPTION_ID" in str(error.value)
     assert "AZURE_CLIENT_SECRET" in str(error.value)
+    assert "AZURE_PRINCIPAL_OBJECT_ID" not in str(error.value)
 
 
 def test_settings_repr_redacts_secrets(tmp_path):

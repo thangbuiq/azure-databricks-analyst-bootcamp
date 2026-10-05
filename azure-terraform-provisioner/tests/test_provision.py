@@ -10,6 +10,7 @@ def test_terraform_env_keeps_credentials_off_arguments(tmp_path):
     assert env["ARM_CLIENT_SECRET"] == s.client_secret
     assert "TF_VAR_client_secret" not in env
     assert env["TF_VAR_resource_group"] == "rg-analytics-demo"
+    assert "TF_VAR_principal_object_id" not in env
 
 
 def test_rejects_cleanup_of_wrong_group(tmp_path):
@@ -31,6 +32,13 @@ def test_terraform_outputs_are_unwrapped():
     from provisioner.terraform import decode_outputs
 
     assert decode_outputs('{"workspace_url":{"value":"adb.example"}}') == {"workspace_url": "adb.example"}
+
+
+def test_public_resource_outputs_never_include_storage_key():
+    from provisioner.terraform import public_resources
+
+    resources = {"resource_group": "demo", "storage_account_key": "private-key"}
+    assert public_resources(resources) == {"resource_group": "demo"}
 
 
 def test_cleanup_refuses_state_group_different_from_confirmation(tmp_path, monkeypatch):

@@ -14,7 +14,6 @@ variable "location" { type = string }
 variable "resource_group" { type = string }
 variable "storage_account" { type = string }
 variable "factory_name" { type = string }
-variable "principal_object_id" { type = string }
 
 resource "azurerm_resource_group" "demo" {
   name     = var.resource_group
@@ -37,17 +36,14 @@ resource "azurerm_storage_container" "demo" {
   storage_account_id    = azurerm_storage_account.demo.id
   container_access_type = "private"
 }
-resource "azurerm_role_assignment" "storage" {
-  scope                = azurerm_storage_account.demo.id
-  role_definition_name = "Storage Blob Data Contributor"
-  principal_id         = var.principal_object_id
-  principal_type       = "ServicePrincipal"
-}
 resource "azurerm_data_factory" "demo" {
   name                = var.factory_name
   resource_group_name = azurerm_resource_group.demo.name
   location            = var.location
 }
 output "storage_account" { value = azurerm_storage_account.demo.name }
-
+output "storage_account_key" {
+  value     = azurerm_storage_account.demo.primary_access_key
+  sensitive = true
+}
 output "resource_group" { value = azurerm_resource_group.demo.name }

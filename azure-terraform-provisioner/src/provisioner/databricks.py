@@ -55,6 +55,9 @@ def deploy_serverless_job(settings, client=None):
 
 def deploy_notebooks(settings, resources=None) -> str:
     """Upload every notebook and utility, then return the serverless job ID."""
+    storage_key = (resources or {}).get("storage_account_key")
+    if not storage_key:
+        raise ValueError("Terraform storage key is missing; run: uv run solution provision")
     client = workspace_client(settings, resources)
     try:
         client.secrets.create_scope(scope=settings.secret_scope)
@@ -62,8 +65,8 @@ def deploy_notebooks(settings, resources=None) -> str:
         pass
     client.secrets.put_secret(
         scope=settings.secret_scope,
-        key="storage-client-secret",
-        string_value=settings.client_secret,
+        key="storage-account-key",
+        string_value=storage_key,
     )
     for source_file in sorted(settings.notebook_source_dir.rglob("*.py")):
         source = source_file.read_text()

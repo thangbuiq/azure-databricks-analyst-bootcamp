@@ -13,7 +13,6 @@
   - [Orchestration Flow](#orchestration-flow)
   - [Tech Stack](#tech-stack)
   - [Setup and Run from Your Local Machine](#setup-and-run-from-your-local-machine)
-    - [0. Azure setup](#0-azure-setup)
     - [1. Prepare the environment](#1-prepare-the-environment)
     - [2. Configure `.env`](#2-configure-env)
     - [3. Provision and deploy](#3-provision-and-deploy)
@@ -92,10 +91,6 @@ sequenceDiagram
 
 ## Setup and Run from Your Local Machine
 
-### 0. Azure setup
-
-For Azure permissions, the values needed in `.env`, provisioning, deployment, and cleanup, follow the [Azure setup guide](AZURE.md).
-
 ### 1. Prepare the environment
 
 Install **Python 3.12** and **[uv](https://docs.astral.sh/uv/getting-started/installation/)**. From the repository root:
@@ -109,11 +104,9 @@ On PowerShell, use `Copy-Item .env.example .env`. Preserve an existing `.env` wh
 
 Spark and Delta Lake run in Databricks; local Java and Spark installations are not required. Terraform is downloaded and verified automatically by the provisioning command.
 
-For Azure credentials and permissions, follow the [Azure setup guide](AZURE.md).
-
 ### 2. Configure `.env`
 
-Use [.env.example](.env.example) as the configuration reference. Fill in these values:
+Use [.env.example](.env.example) as the configuration reference. For Azure permissions and step-by-step setup, follow [AZURE.md](AZURE.md). Fill in these values:
 
 | Variable | Description |
 |---|---|
@@ -121,7 +114,6 @@ Use [.env.example](.env.example) as the configuration reference. Fill in these v
 | `AZURE_TENANT_ID` | Microsoft Entra tenant ID |
 | `AZURE_CLIENT_ID` | Deployment service principal's application/client ID |
 | `AZURE_CLIENT_SECRET` | Deployment service principal's secret |
-| `AZURE_PRINCIPAL_OBJECT_ID` | Object ID for assigning storage access to the deployment service principal |
 | `STORAGE_ACCOUNT` | Globally unique storage account name: 3-24 lowercase letters/numbers |
 | `DATA_FACTORY` | Globally unique Data Factory name |
 | `DATABRICKS_HOST` | Full HTTPS URL from your Free Edition workspace browser |
@@ -129,7 +121,7 @@ Use [.env.example](.env.example) as the configuration reference. Fill in these v
 
 Set `DATABRICKS_NOTEBOOK_PATH` to a workspace folder such as `/Shared/analytics-demo`. Region, resource group, secret scope, serverless job name, and timeouts are configured in [config.py](azure-terraform-provisioner/src/provisioner/config.py).
 
-The Azure service principal needs permission to provision the resource group, Storage, Data Factory, and the Storage Blob Data Contributor role assignment. The Databricks token account must be able to upload workspace files, create the storage secret scope, and create jobs in the Free Edition workspace. Keep both secrets private; neither is written into notebook source.
+The Azure service principal needs Contributor access to create the resource group, Storage, and Data Factory. Storage uses an account key saved in a Databricks secret scope, so the students running a notebook need permission to read that scope. The key grants access to all data in this dedicated demo storage account; keep the scope limited to course users. Neither the storage key nor the Databricks token is written into notebook source.
 
 Free Edition supports serverless compute only. The deployed job leaves cluster settings out so it runs on serverless. Its fair usage limits apply, including the account's job concurrency quota. See [Free Edition limits](https://learn.microsoft.com/en-us/azure/databricks/getting-started/free-edition-limitations).
 
