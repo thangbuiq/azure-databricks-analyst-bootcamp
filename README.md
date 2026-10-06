@@ -19,6 +19,9 @@
     - [4. Execute online](#4-execute-online)
     - [5. Format and check deployment code](#5-format-and-check-deployment-code)
     - [6. Clean up Azure resources](#6-clean-up-azure-resources)
+  - [Free Edition data flow](#free-edition-data-flow)
+  - [Where the data lives](#where-the-data-lives)
+  - [Load the report into Power BI](#load-the-report-into-power-bi)
 
 ---
 
@@ -189,8 +192,39 @@ uv run solution cleanup --confirm-resource-group YOUR_RESOURCE_GROUP
 
 Cleanup verifies the group against Terraform state before destroying its managed resources, including stored demo data.
 
-### Free Edition data flow
+## Free Edition data flow
 
 Deployment uploads the ten-row fixture to Azure, then stages a snapshot in a Databricks managed volume. ADF runs reuse that snapshot. Redeploy to refresh the course data. Bronze/Silver/Gold are managed Delta tables; the Azure `lakehouse` container is retained but unused by this workflow.
 
 Manual notebook execution writes Parquet into the volume. Run `uv run solution run-adf` to also copy the report to Azure. The single-file export is intended for the ten-row example. Azure cleanup leaves Databricks jobs, notebooks, managed tables, and volumes; remove these separately in the workspace and Catalog Explorer.
+
+## Where the data lives
+
+These are the default locations from [config.py](azure-terraform-provisioner/src/provisioner/config.py) and [ADF connections](azure-data-factory-pipeline/src/adf/connections.py). Replace `<STORAGE_ACCOUNT>` with the value in the root `.env`.
+
+| Data | Location | Written by |
+|---|---|---|
+| Source fixture | Azure `raw/sales/sales.csv` | Local deployer, from `databricks-etl-pipeline/data/sales.csv` |
+| Staged source | `/Volumes/workspace/default/analytics_demo/raw/sales.csv` | Local deployer, downloaded from Azure |
+| Bronze table | `workspace.default.analytics_demo_sales_bronze` | Notebook: ten source rows as strings |
+| Silver table | `workspace.default.analytics_demo_sales_silver` | Notebook: cleaned and typed rows with revenue |
+| Gold table | `workspace.default.analytics_demo_sales_gold` | Notebook: totals grouped by date and category |
+| Volume report | `/Volumes/workspace/default/analytics_demo/reports/sales/report.parquet` | Notebook: single Parquet file with Gold results |
+| Azure report | `https://<STORAGE_ACCOUNT>.blob.core.windows.net/reports/sales/report.parquet` | ADF Copy activity after the job succeeds |
+| Azure `lakehouse` container | Created but unused | No current writer |
+
+The Azure account has hierarchical namespace enabled (ADLS Gen2). The export uses its Blob endpoint. The managed Delta tables reside in Databricks-managed storage; creating an Azure container named `lakehouse` does not connect those tables to it. This container is also unrelated to a Microsoft Fabric Lakehouse.
+
+ADF acts as the transfer client: it downloads the volume file using the Databricks Files API and writes its bytes into Blob Storage using the storage account key. The notebook does not need Azure credentials or a direct outbound connection to Azure. See the [ADF execution and export walkthrough](azure-data-factory-pipeline/README.md#how-the-sales-export-works) for activities, authentication, and failure diagnosis.
+
+The [Microsoft ADLS Python guide](https://learn.microsoft.com/en-us/azure/storage/blobs/data-lake-storage-directory-file-acl-python) describes a different option: directly upload files with `DataLakeServiceClient`. That SDK path is not implemented here, and uploading a Parquet file does not create a Delta transaction log.
+
+Reruns overwrite the demo tables and report locations. They do not keep historical snapshots. ADF runs read the staged CSV, so editing only the Azure CSV does not change the next job's input. To change the fixture, edit the repository CSV and redeploy; update the notebook's fixed row-count and total assertions if the dataset changes. Deployment overwrites the Azure CSV with the repository fixture.
+
+## Load the report into Power BI
+
+After `uv run solution run-adf` succeeds, connect Power BI Desktop to the Azure report above. Power BI reads the two-row summary, not the ten-row source or the managed Delta tables.
+
+Follow the [Power BI guide](powerbi-business-report/README.md) for the complete procedure: confirm the blob exists, connect and authenticate, set column types, create measures and visuals, publish, and refresh. The expected totals are **10 sales, 55 units, and 550.00 revenue**.
+
+ADF does not publish or refresh Power BI. Refresh the semantic model after the Azure copy succeeds. No Power BI report is deployed by the Python commands.

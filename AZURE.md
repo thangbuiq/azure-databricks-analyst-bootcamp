@@ -79,6 +79,8 @@ Deployment uploads the ten-row CSV, all notebooks and utilities under `databrick
 
 Follow [Execute online in the README](README.md#4-execute-online) to run a notebook or start the ADF pipeline. After all Azure and Databricks values are configured, `uv run solution setup` runs provisioning and deployment together.
 
+For the next course step, follow [Load the sales report into Power BI](powerbi-business-report/README.md). Use the exported blob in `reports/sales/report.parquet`; the `lakehouse` container remains unused. See [ADF export troubleshooting](azure-data-factory-pipeline/README.md#troubleshoot-the-transfer) if the blob is missing.
+
 ## Clean up
 
 To remove the resource group and its demo data, run:
