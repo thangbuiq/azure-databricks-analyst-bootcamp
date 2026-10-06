@@ -4,6 +4,40 @@ import ast
 from dataclasses import replace
 from unittest.mock import Mock
 
+import pytest
+
+
+@pytest.mark.parametrize("existing_job", [False, True])
+def test_job_deployment_applies_bounded_task_retries(tmp_path, existing_job):
+    from databricks.sdk.service.jobs import BaseJob, JobSettings
+
+    from provisioner.config import load_settings
+    from provisioner.databricks import deploy_serverless_job
+
+    settings = load_settings(tmp_path / ".env")
+    client = Mock()
+    client.jobs.list.return_value = (
+        [BaseJob(job_id=952924853382826, settings=JobSettings(name=settings.databricks_job_name))]
+        if existing_job
+        else []
+    )
+    client.jobs.create.return_value = Mock(job_id=952924853382826)
+
+    assert deploy_serverless_job(settings, client) == "952924853382826"
+    if existing_job:
+        client.jobs.create.assert_not_called()
+        job = client.jobs.reset.call_args.kwargs["new_settings"].as_dict()
+        assert client.jobs.reset.call_args.kwargs["job_id"] == 952924853382826
+    else:
+        client.jobs.reset.assert_not_called()
+        job = JobSettings(**client.jobs.create.call_args.kwargs).as_dict()
+    task = job["tasks"][0]
+    assert task["max_retries"] == 2
+    assert task["min_retry_interval_millis"] == 60_000
+    assert task["retry_on_timeout"] is True
+    assert task["timeout_seconds"] == 900
+    assert job["timeout_seconds"] == 3300
+
 
 def test_upload_stages_source_in_volume_without_notebook_credentials(tmp_path, monkeypatch):
     from databricks.sdk.service import jobs as job_models

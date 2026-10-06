@@ -24,10 +24,15 @@ def _job_settings(settings):
         name=settings.databricks_job_name,
         description="Run the course sales notebook on Free Edition serverless compute.",
         max_concurrent_runs=1,
+        timeout_seconds=settings.databricks_job_timeout_seconds,
         performance_target=jobs.PerformanceTarget.STANDARD,
         tasks=[
             jobs.Task(
                 task_key="sales_etl",
+                max_retries=settings.databricks_task_retries,
+                min_retry_interval_millis=settings.databricks_task_retry_interval_seconds * 1000,
+                retry_on_timeout=True,
+                timeout_seconds=settings.databricks_task_timeout_seconds,
                 notebook_task=jobs.NotebookTask(
                     notebook_path=settings.notebook_workspace_path("sales_demo"),
                     base_parameters=notebook_parameters(settings),

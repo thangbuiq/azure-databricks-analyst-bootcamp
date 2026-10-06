@@ -40,6 +40,24 @@ The destination linked service `ls_report_storage` uses the storage account key 
 
 The job token must have access to run the job and read the volume report. The notebook's execution identity must be able to read the source volume and write the tables and report. Updating the root `.env` does not update deployed ADF credentials until `uv run solution deploy` runs again.
 
+### Missing job IDs and retries
+
+`INVALID_PARAMETER_VALUE: Job ... does not exist` means the ID sent to the selected workspace is unavailable. Job IDs belong to a workspace; deleting and recreating a job changes its ID. Check that ADF's Web activity URL matches `DATABRICKS_HOST` and that its body uses the current `course-sales-etl` job ID. An unpublished ADF Studio edit or an older deployed pipeline can still contain a stale ID.
+
+Run `uv run solution deploy` to create or update the course job and deploy its returned ID into ADF together. Confirm the printed `databricks_job_id` matches the deployed `run_sales_serverless_job` body. Start a new ADF run after deployment. Do not retry an old run with stale inputs or add a manually maintained job ID to `.env`. Deployment also refreshes the source fixture, so account for that if you have edited the staged data.
+
+Retry defaults live in [config.py](../azure-terraform-provisioner/src/provisioner/config.py):
+
+| Layer | Policy | Purpose |
+|---|---|---|
+| ADF start and status Web activities | Three retries, 30 seconds apart | Retry failed API requests. These do not rerun a failed notebook. |
+| Databricks `sales_etl` task | Two retries, minimum retry interval 60 seconds; retry timeouts enabled | Rerun an unsuccessful notebook attempt within the same job run. Each attempt has a 15-minute timeout. |
+| Databricks job | 55-minute overall timeout | Bound execution, including retries, within ADF's one-hour polling window. |
+
+The start request preserves `pipeline().RunId` as its idempotency token, so retrying that POST does not launch a duplicate run. See [Databricks run-now semantics](https://docs.databricks.com/api/jobs/v2/run-now) and [ADF activity retry policies](https://learn.microsoft.com/en-us/azure/data-factory/concepts-pipelines-activities). The task retry interval is measured from the failed attempt's start, so it is not necessarily a full minute after failure.
+
+Retries are bounded, not restricted to transient error codes: ADF can also repeat a bad-ID or authentication request, and Databricks can retry a notebook assertion failure. They cannot repair invalid configuration or data. The overwrite-based teaching notebook supports reruns; review side effects before applying this retry policy to other notebooks. `WAITING_FOR_RETRY` is not terminal, so ADF continues polling until the job finishes and only copies after `SUCCESS`. If ADF monitoring times out, check the remote job separately; stopping monitoring does not cancel it.
+
 ## Run and verify the export
 
 From the repository root, after provisioning and deployment:
@@ -64,6 +82,7 @@ The master starts `pl_demo_pipeline` only after the sales child succeeds. The de
 |---|---|
 | Notebook succeeds but Azure has no report | Manual notebook execution only writes the volume. Run the sales or master ADF pipeline. |
 | `run_sales_serverless_job` returns 401/403 | Workspace host, token validity, and job permissions. Rotate the token in `.env` and redeploy if needed. |
+| `run_sales_serverless_job` says the job does not exist | Verify the workspace and current job ID, then redeploy and start a new ADF run. See [missing job IDs and retries](#missing-job-ids-and-retries). |
 | Job fails or polling times out | Open the Databricks job run and inspect the failing cell, serverless availability, and table/volume permissions. Copy does not run after a failed result check. |
 | Copy source returns 401/403 | Files API token access to the report volume; this is separate from permission to start a job. |
 | Copy source returns 404 | Confirm `report_path` from notebook parameters and the source dataset URL match, and that the notebook produced the file. |

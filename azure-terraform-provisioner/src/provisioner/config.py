@@ -22,6 +22,12 @@ class Settings:
     root: Path
     poll_seconds: int = 15
     timeout_seconds: int = 3600
+    adf_api_retries: int = 3
+    adf_api_retry_interval_seconds: int = 30
+    databricks_task_retries: int = 2
+    databricks_task_retry_interval_seconds: int = 60
+    databricks_task_timeout_seconds: int = 900
+    databricks_job_timeout_seconds: int = 3300
     subscription_id: str = ""
     tenant_id: str = ""
     client_id: str = ""

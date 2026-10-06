@@ -24,7 +24,12 @@ def build_pipeline(settings) -> m.PipelineResource:
                     "job_id": int(settings.databricks_job_id),
                     "idempotency_token": "@{pipeline().RunId}",
                 },
-                policy=m.ActivityPolicy(secure_input=True, retry=1),
+                # A stable token makes retries of this POST return the same run.
+                policy=m.ActivityPolicy(
+                    secure_input=True,
+                    retry=settings.adf_api_retries,
+                    retry_interval_in_seconds=settings.adf_api_retry_interval_seconds,
+                ),
             ),
             m.UntilActivity(
                 name="wait_for_job",
@@ -57,7 +62,11 @@ def build_pipeline(settings) -> m.PipelineResource:
                             + "/api/2.2/jobs/runs/get?run_id=', string(activity('run_sales_serverless_job').output.run_id))",
                         ),
                         headers={"Authorization": "Bearer " + settings.databricks_token},
-                        policy=m.ActivityPolicy(secure_input=True, retry=1),
+                        policy=m.ActivityPolicy(
+                            secure_input=True,
+                            retry=settings.adf_api_retries,
+                            retry_interval_in_seconds=settings.adf_api_retry_interval_seconds,
+                        ),
                     ),
                 ],
             ),
