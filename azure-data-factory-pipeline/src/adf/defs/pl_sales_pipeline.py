@@ -16,14 +16,23 @@ def build_pipeline(settings) -> m.PipelineResource:
                 name="run_sales_serverless_job",
                 method="POST",
                 url=settings.databricks_host + "/api/2.2/jobs/run-now",
-                headers={"Authorization": "Bearer " + settings.databricks_token, "Content-Type": "application/json"},
-                body={"job_id": int(settings.databricks_job_id), "idempotency_token": "@{pipeline().RunId}"},
-                policy=m.ActivityPolicy(secure_input=True),
+                headers={
+                    "Authorization": "Bearer " + settings.databricks_token,
+                    "Content-Type": "application/json",
+                },
+                body={
+                    "job_id": int(settings.databricks_job_id),
+                    "idempotency_token": "@{pipeline().RunId}",
+                },
+                policy=m.ActivityPolicy(secure_input=True, retry=1),
             ),
             m.UntilActivity(
                 name="wait_for_job",
                 depends_on=[
-                    m.ActivityDependency(activity="run_sales_serverless_job", dependency_conditions=["Succeeded"])
+                    m.ActivityDependency(
+                        activity="run_sales_serverless_job",
+                        dependency_conditions=["Succeeded"],
+                    )
                 ],
                 timeout="01:00:00",
                 expression=m.Expression(
@@ -36,7 +45,10 @@ def build_pipeline(settings) -> m.PipelineResource:
                         name="get_job_status",
                         method="GET",
                         depends_on=[
-                            m.ActivityDependency(activity="poll_interval", dependency_conditions=["Succeeded"])
+                            m.ActivityDependency(
+                                activity="poll_interval",
+                                dependency_conditions=["Succeeded"],
+                            )
                         ],
                         url=m.Expression(
                             type="Expression",
@@ -45,7 +57,7 @@ def build_pipeline(settings) -> m.PipelineResource:
                             + "/api/2.2/jobs/runs/get?run_id=', string(activity('run_sales_serverless_job').output.run_id))",
                         ),
                         headers={"Authorization": "Bearer " + settings.databricks_token},
-                        policy=m.ActivityPolicy(secure_input=True),
+                        policy=m.ActivityPolicy(secure_input=True, retry=1),
                     ),
                 ],
             ),
@@ -53,7 +65,8 @@ def build_pipeline(settings) -> m.PipelineResource:
                 name="check_job_result",
                 depends_on=[m.ActivityDependency(activity="wait_for_job", dependency_conditions=["Succeeded"])],
                 expression=m.Expression(
-                    type="Expression", value="@equals(activity('get_job_status').output.state.result_state, 'SUCCESS')"
+                    type="Expression",
+                    value="@equals(activity('get_job_status').output.state.result_state, 'SUCCESS')",
                 ),
                 if_false_activities=[
                     m.FailActivity(
