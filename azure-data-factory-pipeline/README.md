@@ -16,9 +16,9 @@ The implementation is in [pl_sales_pipeline.py](src/adf/defs/pl_sales_pipeline.p
 
 | Activity | What it does |
 |---|---|
-| `run_sales_serverless_job` | POSTs the deployed job ID to `/api/2.2/jobs/run-now`; the ADF run ID is the idempotency token. |
-| `wait_for_job` | Waits 30 seconds between Jobs API status requests; stops on `TERMINATED`, `SKIPPED`, or `INTERNAL_ERROR`, with a one-hour timeout. |
-| `check_job_result` | Requires `result_state` to equal `SUCCESS`; otherwise `job_failed` fails the pipeline. |
+| `sales_start` | POSTs the deployed job ID to `/api/2.2/jobs/run-now`; the idempotency token combines the ADF run ID with a stable suffix for this job step. |
+| `sales_wait` | Waits 30 seconds between Jobs API status requests; stops on `TERMINATED`, `SKIPPED`, or `INTERNAL_ERROR`, with a one-hour timeout. |
+| `sales_check` | Requires `result_state` to equal `SUCCESS`; otherwise `sales_failed` fails the pipeline. |
 | `copy_report_to_azure` | Downloads the volume report over HTTP and writes it to the Azure `reports` container. Runs only after the result check succeeds. |
 
 The HTTP source dataset `ds_volume_report` uses this request with the default volume configuration:
@@ -44,7 +44,7 @@ The job token must have access to run the job and read the volume report. The no
 
 `INVALID_PARAMETER_VALUE: Job ... does not exist` means the ID sent to the selected workspace is unavailable. Job IDs belong to a workspace; deleting and recreating a job changes its ID. Check that ADF's Web activity URL matches `DATABRICKS_HOST` and that its body uses the current `course-sales-etl` job ID. An unpublished ADF Studio edit or an older deployed pipeline can still contain a stale ID.
 
-Run `uv run solution deploy` to create or update the course job and deploy its returned ID into ADF together. Confirm the printed `databricks_job_id` matches the deployed `run_sales_serverless_job` body. Start a new ADF run after deployment. Do not retry an old run with stale inputs or add a manually maintained job ID to `.env`. Deployment also refreshes the source fixture, so account for that if you have edited the staged data.
+Run `uv run solution deploy` to create or update the course job and deploy its returned ID into ADF together. Confirm the printed `databricks_job_id` matches the deployed `sales_start` body. Start a new ADF run after deployment. Do not retry an old run with stale inputs or add a manually maintained job ID to `.env`. Deployment also refreshes the source fixture, so account for that if you have edited the staged data.
 
 Retry defaults live in [config.py](../azure-terraform-provisioner/src/provisioner/config.py):
 
@@ -54,7 +54,7 @@ Retry defaults live in [config.py](../azure-terraform-provisioner/src/provisione
 | Databricks `sales_etl` task | Two retries, minimum retry interval 60 seconds; retry timeouts enabled | Rerun an unsuccessful notebook attempt within the same job run. Each attempt has a 15-minute timeout. |
 | Databricks job | 55-minute overall timeout | Bound execution, including retries, within ADF's one-hour polling window. |
 
-The start request preserves `pipeline().RunId` as its idempotency token, so retrying that POST does not launch a duplicate run. See [Databricks run-now semantics](https://docs.databricks.com/api/jobs/v2/run-now) and [ADF activity retry policies](https://learn.microsoft.com/en-us/azure/data-factory/concepts-pipelines-activities). The task retry interval is measured from the failed attempt's start, so it is not necessarily a full minute after failure.
+The start request combines `pipeline().RunId` with a stable suffix derived from the helper’s `name`, so retries do not launch duplicate runs and different job steps in one pipeline have different tokens. See [Databricks run-now semantics](https://docs.databricks.com/api/jobs/v2/run-now) and [ADF activity retry policies](https://learn.microsoft.com/en-us/azure/data-factory/concepts-pipelines-activities). The task retry interval is measured from the failed attempt's start, so it is not necessarily a full minute after failure.
 
 Retries are bounded, not restricted to transient error codes: ADF can also repeat a bad-ID or authentication request, and Databricks can retry a notebook assertion failure. They cannot repair invalid configuration or data. The overwrite-based teaching notebook supports reruns; review side effects before applying this retry policy to other notebooks. `WAITING_FOR_RETRY` is not terminal, so ADF continues polling until the job finishes and only copies after `SUCCESS`. If ADF monitoring times out, check the remote job separately; stopping monitoring does not cancel it.
 
@@ -81,8 +81,8 @@ The master starts `pl_demo_pipeline` only after the sales child succeeds. The de
 | Symptom | What to inspect |
 |---|---|
 | Notebook succeeds but Azure has no report | Manual notebook execution only writes the volume. Run the sales or master ADF pipeline. |
-| `run_sales_serverless_job` returns 401/403 | Workspace host, token validity, and job permissions. Rotate the token in `.env` and redeploy if needed. |
-| `run_sales_serverless_job` says the job does not exist | Verify the workspace and current job ID, then redeploy and start a new ADF run. See [missing job IDs and retries](#missing-job-ids-and-retries). |
+| `sales_start` returns 401/403 | Workspace host, token validity, and job permissions. Rotate the token in `.env` and redeploy if needed. |
+| `sales_start` says the job does not exist | Verify the workspace and current job ID, then redeploy and start a new ADF run. See [missing job IDs and retries](#missing-job-ids-and-retries). |
 | Job fails or polling times out | Open the Databricks job run and inspect the failing cell, serverless availability, and table/volume permissions. Copy does not run after a failed result check. |
 | Copy source returns 401/403 | Files API token access to the report volume; this is separate from permission to start a job. |
 | Copy source returns 404 | Confirm `report_path` from notebook parameters and the source dataset URL match, and that the notebook produced the file. |
@@ -92,6 +92,38 @@ The master starts `pl_demo_pipeline` only after the sales child succeeds. The de
 | Power BI shows old totals after a successful copy | Refresh the Power BI semantic model separately. ADF does not trigger it. |
 
 A previous report can remain after a later run fails. File existence alone is not proof of a successful current run; check the copy status and last-modified time. Avoid simultaneous manual notebook runs and ADF runs because they share table and file paths.
+
+## Reuse activity helpers
+
+[activities.py](src/adf/activities.py) keeps the Azure SDK details out of pipeline definitions:
+
+| Helper | Purpose |
+|---|---|
+| `run_databricks_job(settings, name=..., job_id=..., after=...)` | Start an existing serverless job, poll, and require success. Returns three activities; use `*` inside the activity list. |
+| `copy_file(name=..., source=..., destination=..., after=...)` | Copy bytes from an HTTP source dataset to an Azure Blob destination dataset. |
+| `execute_pipeline(name=..., pipeline=..., after=...)` | Run a child pipeline and wait for completion. |
+
+`after` is optional and names one activity that must succeed first. Give every helper call a unique `name`. A Databricks call named `sales` creates `sales_start`, `sales_wait`, and `sales_check`; subsequent steps should depend on **`sales_check`**, which confirms the job succeeded.
+
+For example, the sales pipeline defines its activities as:
+
+```python
+activities = [
+    *run_databricks_job(settings, name="sales", job_id=settings.databricks_job_id),
+    copy_file(
+        name="copy_report_to_azure",
+        source=VOLUME_REPORT,
+        destination=AZURE_REPORT,
+        after="sales_check",
+    ),
+]
+```
+
+Import the helpers from `adf.activities` and dataset constants from `adf.connections`. The complete working definition is [pl_sales_pipeline.py](src/adf/defs/pl_sales_pipeline.py).
+
+A second job can use `after="sales_check"` to run after the first. Each job call has distinct activity names and retry tokens. The helper runs a saved job; its notebook tasks must already exist and use Serverless compute.
+
+`copy_file` takes **dataset names**, not paths. Register new datasets and linked services in `connections.py`; the helper does not create them. It transfers an existing file unchanged, not a Delta table or a query result.
 
 ## 1. Create a definition
 
@@ -118,7 +150,7 @@ Every definition exports:
 - `NAME`: a unique ADF pipeline name.
 - `build_pipeline(settings)`: returns the complete Azure SDK `PipelineResource`. `settings` contains the root `.env` configuration; it can be unused for a simple example.
 
-The sales definition triggers a Databricks Job deployed by the provisioner. For other job definitions, copy its Web activity start/poll/result-check pattern. For pipeline dependencies, follow `pl_master_etl.py`: call a child pipeline with `wait_on_completion=True`, then specify a `Succeeded` dependency for the next activity. Notebook paths belong to the Databricks job tasks configured in `provisioner/databricks.py`; use `settings.notebook_workspace_path("your_notebook")` there. Adding a pipeline definition alone does not create another Databricks job.
+The sales definition triggers a Databricks Job deployed by the provisioner. For other job definitions, call `run_databricks_job` from `adf.activities`. For pipeline dependencies, follow `pl_master_etl.py`: use `execute_pipeline` and set `after` to the preceding activity name. The helper waits for completion and requires success. Notebook paths belong to the Databricks job tasks configured in `provisioner/databricks.py`; use `settings.notebook_workspace_path("your_notebook")` there. Adding a pipeline definition alone does not create another Databricks job.
 
 ## 2. Import and register it
 
