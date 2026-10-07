@@ -46,7 +46,7 @@ Students develop, execute, and test notebooks **online in the Databricks workspa
 | `databricks-etl-pipeline/` | Dummy source data, SQL-based PySpark notebooks and shared write utilities under `src/notebooks/` |
 | `powerbi-business-report/` | Power BI reporting layer consuming the exported Parquet data |
 
-See [adding pipeline definitions](azure-data-factory-pipeline/README.md) for the import-and-register workflow.
+See [adding pipeline definitions](azure-data-factory-pipeline/README.md#add-a-notebook-pipeline): add notebooks and one `pl_*.py` file, then deploy. Pipeline discovery and Databricks job creation are automatic.
 
 ---
 
@@ -124,7 +124,7 @@ Use [.env.example](.env.example) as the configuration reference. For Azure permi
 | `DATABRICKS_HOST` | Full HTTPS URL from your Free Edition workspace browser |
 | `DATABRICKS_TOKEN` | Workspace access token used to deploy notebooks and the job |
 
-Set `DATABRICKS_NOTEBOOK_PATH` to a workspace folder such as `/Shared/analytics-demo`. Region, resource group, catalog/schema/volume, table prefix, serverless job name, and timeouts are configured in [config.py](azure-terraform-provisioner/src/provisioner/config.py).
+Set `DATABRICKS_NOTEBOOK_PATH` to a workspace folder such as `/Shared/analytics-demo`. Region, resource group, catalog/schema/volume, table prefix, and timeouts are configured in [config.py](azure-terraform-provisioner/src/provisioner/config.py). Job names and notebook paths are declared in each ADF definition; generated job IDs are supplied automatically during deployment.
 
 The Azure service principal needs Contributor access. The local provisioner and ADF use the storage account key; notebooks use managed Databricks storage and need no Azure credentials. ADF stores storage credentials in secure linked-service fields.
 
@@ -145,7 +145,7 @@ The command does not create a Databricks workspace. Use your existing Free Editi
 uv run solution deploy
 ```
 
-Deployment uploads every Python notebook and utility beneath `DATABRICKS_NOTEBOOK_PATH`, uploads the ten-row source CSV to Azure Storage, creates or updates the serverless Databricks job, and configures ADF to run that job. ADF Web activities call the Databricks Jobs API and poll for completion because the Azure Databricks Job activity rejects Free Edition workspace URLs.
+Deployment discovers `pl_*.py` files under `azure-data-factory-pipeline/src/adf/defs/`, validates their notebook paths, uploads every notebook and utility beneath `DATABRICKS_NOTEBOOK_PATH`, and creates or updates all declared serverless Databricks jobs. It passes their generated IDs directly into ADF and deploys all discovered pipelines. It also uploads and stages the ten-row course sales fixture. ADF Web activities start and poll jobs because the Azure Databricks Job activity rejects Free Edition workspace URLs.
 
 The Azure Storage account and Data Factory can incur Azure charges. Free Edition job execution uses Databricks serverless quotas.
 

@@ -38,8 +38,6 @@ class Settings:
     factory_name: str = "adf-analytics-demo"
     databricks_host: str = ""
     databricks_token: str = field(default="", repr=False)
-    databricks_job_name: str = "course-sales-etl"
-    databricks_job_id: str = ""
     notebook_path: str = "/Shared/analytics-demo"
     databricks_catalog: str = "workspace"
     databricks_schema: str = "default"

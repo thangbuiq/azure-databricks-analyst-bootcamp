@@ -3,20 +3,21 @@
 import argparse
 import json
 import sys
-from dataclasses import replace
 from pathlib import Path
 
-from adf.defs.pl_master_etl import NAME as MASTER_PIPELINE
 from adf.deploy import pipeline_names
 from provisioner.config import load_settings
 
 
 def _deploy(settings, resources):
+    from adf.defs import discover_jobs, discover_pipelines
     from adf.deploy import deploy_pipelines
     from provisioner.databricks import deploy_notebooks
     from provisioner.storage import upload_fixture
 
     settings.validate_databricks()
+    pipelines = discover_pipelines()
+    discover_jobs(pipelines, settings.notebook_source_dir)
     print("Uploading the 10-row CSV…", flush=True)
     upload_fixture(
         settings,
@@ -24,14 +25,14 @@ def _deploy(settings, resources):
         resources["storage_account_key"],
     )
     print("Uploading all notebooks and utilities…", flush=True)
-    job_id = deploy_notebooks(settings, resources)
-    print("Creating the ADF linked service and registered pipelines…", flush=True)
-    deploy_pipelines(replace(settings, databricks_job_id=job_id), resources)
+    job_ids = deploy_notebooks(settings, resources, pipelines)
+    print("Creating the ADF linked services and discovered pipelines…", flush=True)
+    deploy_pipelines(settings, resources, job_ids, pipelines)
     return {
         "databricks_host": settings.databricks_host,
-        "databricks_job_id": job_id,
+        "databricks_jobs": job_ids,
         "notebook_path": settings.notebook_path,
-        "pipelines": list(pipeline_names()),
+        "pipelines": list(pipeline_names(pipelines)),
     }
 
 
@@ -40,18 +41,17 @@ def main(argv=None):
     parser.add_argument("--env", type=Path, help="Optional .env path (default: repository root)")
     commands = parser.add_subparsers(dest="command", required=True)
     for name, help_text in [
-        ("setup", "Provision Azure storage and Data Factory, then deploy the serverless job"),
+        ("setup", "Provision Azure, then deploy all declared jobs and pipelines"),
         ("provision", "Provision Azure automatically through Terraform"),
         ("deploy", "Upload the notebook/data and update ADF pipelines"),
     ]:
         commands.add_parser(name, help=help_text)
     run = commands.add_parser("run-adf", help="Run an ADF pipeline and wait for its result")
-    names = pipeline_names()
     run.add_argument(
         "pipeline",
         nargs="?",
-        default=MASTER_PIPELINE,
-        choices=names,
+        default="pl_master_etl",
+        help="Discovered pipeline name (default: pl_master_etl)",
     )
     status = commands.add_parser("status", help="Inspect an ADF run")
     status.add_argument("run_id")
@@ -69,7 +69,10 @@ def main(argv=None):
             result = {"destroyed_resource_group": settings.resource_group}
         elif args.command in ("setup", "provision"):
             if args.command == "setup":
+                from adf.defs import discover_jobs, discover_pipelines
+
                 settings.validate_databricks()
+                discover_jobs(discover_pipelines(), settings.notebook_source_dir)
             provisioned = provision_resources(settings)
             result = provisioned if args.command == "setup" else public_resources(provisioned)
             if args.command == "setup":

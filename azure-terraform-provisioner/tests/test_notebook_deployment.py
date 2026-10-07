@@ -7,23 +7,56 @@ from unittest.mock import Mock
 import pytest
 
 
+def test_deploys_multiple_declared_jobs_and_task_dependencies(tmp_path):
+    from databricks.sdk.service.jobs import BaseJob, JobSettings
+
+    from adf.jobs import serverless_job
+    from provisioner.config import load_settings
+    from provisioner.databricks import deploy_serverless_jobs
+
+    settings = load_settings(tmp_path / ".env")
+    sales = serverless_job("course-sales-etl", ("sales_demo",))
+    who = serverless_job("course-who-etl", ("who/01_staging", "who/02_dim_country_year"))
+    client = Mock()
+    client.jobs.list.side_effect = [
+        [BaseJob(job_id=111, settings=JobSettings(name="course-sales-etl"))],
+        [],
+    ]
+    client.jobs.create.return_value = Mock(job_id=222)
+
+    assert deploy_serverless_jobs(settings, (sales, who), client) == {
+        "course-sales-etl": "111",
+        "course-who-etl": "222",
+    }
+
+    sales_settings = client.jobs.reset.call_args.kwargs["new_settings"].as_dict()
+    who_settings = JobSettings(**client.jobs.create.call_args.kwargs).as_dict()
+    assert sales_settings["tasks"][0]["notebook_task"]["notebook_path"] == settings.notebook_path + "/sales_demo"
+    assert who_settings["tasks"][0]["task_key"] == "01_staging"
+    assert who_settings["tasks"][1]["depends_on"] == [{"task_key": "01_staging"}]
+    assert who_settings["tasks"][1]["notebook_task"]["notebook_path"] == (
+        settings.notebook_path + "/who/02_dim_country_year"
+    )
+    assert all(task.get("new_cluster") is None for task in who_settings["tasks"])
+
+
 @pytest.mark.parametrize("existing_job", [False, True])
 def test_job_deployment_applies_bounded_task_retries(tmp_path, existing_job):
     from databricks.sdk.service.jobs import BaseJob, JobSettings
 
+    from adf.jobs import serverless_job
     from provisioner.config import load_settings
-    from provisioner.databricks import deploy_serverless_job
+    from provisioner.databricks import deploy_serverless_jobs
 
     settings = load_settings(tmp_path / ".env")
+    declaration = serverless_job("course-sales-etl", ("sales_demo",))
     client = Mock()
     client.jobs.list.return_value = (
-        [BaseJob(job_id=952924853382826, settings=JobSettings(name=settings.databricks_job_name))]
-        if existing_job
-        else []
+        [BaseJob(job_id=952924853382826, settings=JobSettings(name=declaration.name))] if existing_job else []
     )
     client.jobs.create.return_value = Mock(job_id=952924853382826)
 
-    assert deploy_serverless_job(settings, client) == "952924853382826"
+    assert deploy_serverless_jobs(settings, (declaration,), client) == {"course-sales-etl": "952924853382826"}
     if existing_job:
         client.jobs.create.assert_not_called()
         job = client.jobs.reset.call_args.kwargs["new_settings"].as_dict()
@@ -42,6 +75,7 @@ def test_job_deployment_applies_bounded_task_retries(tmp_path, existing_job):
 def test_upload_stages_source_in_volume_without_notebook_credentials(tmp_path, monkeypatch):
     from databricks.sdk.service import jobs as job_models
 
+    from adf.jobs import serverless_job
     from provisioner import databricks
     from provisioner.config import load_settings
 
@@ -58,7 +92,10 @@ def test_upload_stages_source_in_volume_without_notebook_credentials(tmp_path, m
     client.jobs.list.return_value = []
     client.jobs.create.return_value = Mock(job_id=123)
     resources = {"storage_account_key": "private-storage-key"}
-    assert databricks.deploy_notebooks(settings, resources) == "123"
+    pipeline = type(
+        "Pipeline", (), {"NAME": "sales", "DATABRICKS_JOBS": (serverless_job("course-sales-etl", ("sales_demo",)),)}
+    )
+    assert databricks.deploy_notebooks(settings, resources, (pipeline,)) == {"course-sales-etl": "123"}
     client.secrets.put_secret.assert_not_called()
     assert client.files.upload.call_args.args[0] == settings.volume_path + "/raw/sales.csv"
     assert client.files.upload.call_args.args[1].getvalue() == b"sale_id\n1\n"
@@ -88,7 +125,7 @@ def test_upload_stages_source_in_volume_without_notebook_credentials(tmp_path, m
     assert "from utils import" in source
     assert "private-secret" not in utility["content"].decode()
     job = client.jobs.create.call_args.kwargs
-    assert job["name"] == settings.databricks_job_name
+    assert job["name"] == "course-sales-etl"
     assert job["performance_target"] == job_models.PerformanceTarget.STANDARD
     task = job["tasks"][0]
     assert isinstance(task, job_models.Task)
@@ -98,6 +135,7 @@ def test_upload_stages_source_in_volume_without_notebook_credentials(tmp_path, m
 
 
 def test_deploy_discovers_new_notebooks_and_utilities(tmp_path, monkeypatch):
+    from adf.jobs import serverless_job
     from provisioner import databricks
     from provisioner.config import load_settings
 
@@ -114,7 +152,8 @@ def test_deploy_discovers_new_notebooks_and_utilities(tmp_path, monkeypatch):
     monkeypatch.setattr(databricks, "workspace_client", lambda *args: client)
     client.jobs.list.return_value = []
     client.jobs.create.return_value = Mock(job_id=456)
-    assert databricks.deploy_notebooks(settings, {"storage_account_key": "test-key"}) == "456"
+    pipeline = type("Pipeline", (), {"NAME": "first", "DATABRICKS_JOBS": (serverless_job("first", ("first",)),)})
+    assert databricks.deploy_notebooks(settings, {"storage_account_key": "test-key"}, (pipeline,)) == {"first": "456"}
     uploads = {call.kwargs["path"]: call.kwargs for call in client.workspace.upload.call_args_list}
     assert set(uploads) == {
         settings.notebook_path + "/first",

@@ -11,4 +11,6 @@
 - Use root `prek.toml` and root `pyproject.toml` for Ruff linting and formatting.
 
 - Keep each complete ADF pipeline in its own Python file under `azure-data-factory-pipeline/src/adf/defs/`.
-- Register new ADF definitions only by importing the module and adding it to `PIPELINES` in `defs/__init__.py`; keep pipeline-building logic in `adf/deploy.py`.
+- Discover `pl_*.py` definitions automatically. Declare Databricks jobs beside their pipeline using `serverless_job` and notebook paths; keep pipeline-building logic in `adf/deploy.py`.
+- Analysts add notebooks and one definition file only. Do not require job IDs in `.env`, manual Databricks job creation, registry edits, or provisioner changes for a new notebook pipeline.
+- Declare parent pipeline dependencies with `PIPELINE_DEPENDENCIES` so deployment creates child pipelines first.

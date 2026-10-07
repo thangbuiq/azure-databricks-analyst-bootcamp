@@ -135,28 +135,7 @@ df.write.mode("overwrite").saveAsTable("workspace.dm_who.fact_suicide_rate")
 display(df.limit(10))
 ```
 
-## 3. Deploy and create the Databricks job
-
-With the existing course resources and root `.env` configured, run from the repository root:
-
-```bash
-uv run solution deploy
-```
-
-This uploads all notebooks/utilities to `DATABRICKS_NOTEBOOK_PATH` using `DATABRICKS_TOKEN`, and refreshes the existing sales deployment. The WHO notebooks appear in its **who** subfolder.
-
-In Databricks **Jobs & Pipelines**, create a job named **course-who-etl** with these Notebook tasks. Select **Serverless** for every task and **All succeeded** for dependent tasks:
-
-| Task key | Notebook under `DATABRICKS_NOTEBOOK_PATH` | Depends on |
-|---|---|---|
-| `staging` | `who/01_staging` | — |
-| `country_year` | `who/02_dim_country_year` | `staging` |
-| `demographic` | `who/03_dim_demographic` | `country_year` |
-| `fact` | `who/04_fact_suicide_rate` | `demographic` |
-
-Set maximum concurrent runs to **1**. Run the job once, confirm all four tasks succeed, and copy its **Job ID**. Each task reads saved tables; it does not need variables from another notebook. See [Databricks task configuration](https://docs.databricks.com/aws/en/jobs/configure-task).
-
-## 4. Add the ADF pipeline
+## 3. Add the ADF pipeline
 
 ```text
 pl_who_pipeline
@@ -165,76 +144,50 @@ pl_who_pipeline
   → Check result_state = SUCCESS; otherwise fail
 ```
 
-Use the shared helpers in `adf/activities.py`. The Azure Databricks Job activity rejects the course Free Edition URL; [Web activities](https://learn.microsoft.com/en-us/azure/data-factory/control-flow-web-activity) call the Jobs API instead.
-
-### A. Save the WHO job ID
-
-Add to the existing root **`.env`**, replacing the example with your Job ID:
-
-```dotenv
-WHO_DATABRICKS_JOB_ID=123456789
-```
-
-In **`azure-terraform-provisioner/src/provisioner/config.py`**, add this field inside `Settings`, beside `databricks_job_id`:
-
-```python
-    who_databricks_job_id: str = ""
-```
-
-Inside `load_settings`, add this argument to the existing `s = Settings(...)` call:
-
-```python
-        who_databricks_job_id=get("WHO_DATABRICKS_JOB_ID"),
-```
-
-### B. Create the WHO definition
-
 Create **`azure-data-factory-pipeline/src/adf/defs/pl_who_pipeline.py`**:
 
 ```python
 from azure.mgmt.datafactory import models as m
 
 from adf.activities import run_databricks_job
+from adf.jobs import serverless_job
 
 NAME = "pl_who_pipeline"
+DATABRICKS_JOBS = (
+    serverless_job(
+        "course-who-etl",
+        notebooks=(
+            "who/01_staging",
+            "who/02_dim_country_year",
+            "who/03_dim_demographic",
+            "who/04_fact_suicide_rate",
+        ),
+    ),
+)
 
 
-def build_pipeline(settings):
+def build_pipeline(settings, job_ids):
     return m.PipelineResource(
         description="Run the four WHO notebooks on Serverless.",
         concurrency=1,
         activities=[
-            *run_databricks_job(settings, name="who", job_id=settings.who_databricks_job_id),
+            *run_databricks_job(settings, name="who", job_id=job_ids[DATABRICKS_JOBS[0].name]),
         ],
     )
 ```
 
-The `*` inserts the helper's three activities: **who_start → who_wait → who_check**. It starts the existing job, polls every 30 seconds, and fails the pipeline if the job does not succeed. Use a unique `name` for each job call.
+Plain notebook paths run sequentially in the listed order. Deployment uploads them, creates or updates `course-who-etl` on Serverless, and passes its generated ID to `build_pipeline`. No job ID or provisioner edit is required.
 
-The sales pipeline also uses `copy_file(...)` from `adf.activities`; see [the complete example](azure-data-factory-pipeline/src/adf/defs/pl_sales_pipeline.py). It takes registered source/destination dataset names and `after="sales_check"`. WHO currently produces tables only; exporting a WHO file would also require an output file and its own datasets in `adf/connections.py`.
+The `*` inserts **who_start → who_wait → who_check**. The activities start the job, poll every 30 seconds, and fail ADF if a notebook task fails. The Azure Databricks Job activity rejects the course Free Edition URL, so the helper uses ADF Web activities and the Jobs API.
 
-### C. Register the definition
-
-Replace **`azure-data-factory-pipeline/src/adf/defs/__init__.py`** with:
-
-```python
-"""Register children before the master that calls them."""
-
-from adf.defs import pl_demo_pipeline, pl_master_etl, pl_sales_pipeline, pl_who_pipeline
-
-PIPELINES = (pl_sales_pipeline, pl_demo_pipeline, pl_who_pipeline, pl_master_etl)
-```
-
-The existing `adf/deploy.py` builds and deploys registered definitions. Keep `pl_master_etl` as sales → dummy demo; run the WHO pipeline separately.
-
-### D. Deploy and run
+## 4. Deploy and run
 
 ```bash
 uv run solution deploy
 uv run solution run-adf pl_who_pipeline
 ```
 
-In ADF Monitor, confirm **who_start → who_wait → who_check** succeed. Confirm the four WHO tables exist under **workspace → dm_who**. Reruns overwrite them. ADF uses the staged CSV; it does not refresh the Azure-to-volume snapshot.
+`solution deploy` automatically discovers `pl_who_pipeline.py`, validates its notebook paths, uploads all notebooks, deploys the Databricks job, and deploys ADF. In ADF Monitor, confirm **who_start → who_wait → who_check** succeed, then confirm the four tables under **workspace → dm_who**. ADF uses the staged CSV; it does not refresh the Azure-to-volume snapshot.
 
 ## 5. Power BI report examples — reference only
 
