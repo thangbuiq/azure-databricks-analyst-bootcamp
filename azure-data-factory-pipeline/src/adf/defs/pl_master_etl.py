@@ -7,9 +7,10 @@ from adf.defs.pl_demo_pipeline import NAME as DEMO_PIPELINE
 from adf.defs.pl_sales_pipeline import NAME as SALES_PIPELINE
 
 NAME = "pl_master_etl"
+PIPELINE_DEPENDENCIES = (SALES_PIPELINE, DEMO_PIPELINE)
 
 
-def build_pipeline(settings) -> m.PipelineResource:
+def build_pipeline(settings, _job_ids) -> m.PipelineResource:
     return m.PipelineResource(
         description="Master ETL: sales must succeed before the demo pipeline starts.",
         concurrency=1,

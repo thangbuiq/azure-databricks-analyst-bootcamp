@@ -44,14 +44,14 @@ The job token must have access to run the job and read the volume report. The no
 
 `INVALID_PARAMETER_VALUE: Job ... does not exist` means the ID sent to the selected workspace is unavailable. Job IDs belong to a workspace; deleting and recreating a job changes its ID. Check that ADF's Web activity URL matches `DATABRICKS_HOST` and that its body uses the current `course-sales-etl` job ID. An unpublished ADF Studio edit or an older deployed pipeline can still contain a stale ID.
 
-Run `uv run solution deploy` to create or update the course job and deploy its returned ID into ADF together. Confirm the printed `databricks_job_id` matches the deployed `sales_start` body. Start a new ADF run after deployment. Do not retry an old run with stale inputs or add a manually maintained job ID to `.env`. Deployment also refreshes the source fixture, so account for that if you have edited the staged data.
+Run `uv run solution deploy` to create or update the course job and deploy its returned ID into ADF together. The output's `databricks_jobs` mapping contains the current ID under `course-sales-etl`. Start a new ADF run after deployment. Do not retry an old run with stale inputs or add a manually maintained job ID to `.env`. Deployment also refreshes the source fixture, so account for that if you have edited the staged data.
 
 Retry defaults live in [config.py](../azure-terraform-provisioner/src/provisioner/config.py):
 
 | Layer | Policy | Purpose |
 |---|---|---|
 | ADF start and status Web activities | Three retries, 30 seconds apart | Retry failed API requests. These do not rerun a failed notebook. |
-| Databricks `sales_etl` task | Two retries, minimum retry interval 60 seconds; retry timeouts enabled | Rerun an unsuccessful notebook attempt within the same job run. Each attempt has a 15-minute timeout. |
+| Databricks notebook tasks | Two retries, minimum retry interval 60 seconds; retry timeouts enabled | Rerun an unsuccessful notebook attempt within the same job run. Each attempt has a 15-minute timeout. |
 | Databricks job | 55-minute overall timeout | Bound execution, including retries, within ADF's one-hour polling window. |
 
 The start request combines `pipeline().RunId` with a stable suffix derived from the helper’s `name`, so retries do not launch duplicate runs and different job steps in one pipeline have different tokens. See [Databricks run-now semantics](https://docs.databricks.com/api/jobs/v2/run-now) and [ADF activity retry policies](https://learn.microsoft.com/en-us/azure/data-factory/concepts-pipelines-activities). The task retry interval is measured from the failed attempt's start, so it is not necessarily a full minute after failure.
@@ -109,7 +109,7 @@ For example, the sales pipeline defines its activities as:
 
 ```python
 activities = [
-    *run_databricks_job(settings, name="sales", job_id=settings.databricks_job_id),
+    *run_databricks_job(settings, name="sales", job_id=job_ids[DATABRICKS_JOBS[0].name]),
     copy_file(
         name="copy_report_to_azure",
         source=VOLUME_REPORT,
@@ -121,60 +121,60 @@ activities = [
 
 Import the helpers from `adf.activities` and dataset constants from `adf.connections`. The complete working definition is [pl_sales_pipeline.py](src/adf/defs/pl_sales_pipeline.py).
 
-A second job can use `after="sales_check"` to run after the first. Each job call has distinct activity names and retry tokens. The helper runs a saved job; its notebook tasks must already exist and use Serverless compute.
+A second job can use `after="sales_check"` to run after the first. Each job call has distinct activity names and retry tokens. Declared jobs are created or updated automatically on Serverless compute.
 
 `copy_file` takes **dataset names**, not paths. Register new datasets and linked services in `connections.py`; the helper does not create them. It transfers an existing file unchanged, not a Delta table or a query result.
 
-## 1. Create a definition
+## Add a notebook pipeline
 
-Create `src/adf/defs/pl_example.py`:
+Add notebooks below `../databricks-etl-pipeline/src/notebooks/`, then create one `pl_*.py` file in `src/adf/defs/`. For example:
 
 ```python
 from azure.mgmt.datafactory import models as m
 
+from adf.activities import run_databricks_job
+from adf.jobs import serverless_job
+
 NAME = "pl_example"
+DATABRICKS_JOBS = (
+    serverless_job(
+        "course-example-etl",
+        notebooks=("example/01_staging", "example/02_transform"),
+    ),
+)
 
 
-def build_pipeline(settings) -> m.PipelineResource:
+def build_pipeline(settings, job_ids) -> m.PipelineResource:
     return m.PipelineResource(
-        description="A small example to demonstrate pipeline registration.",
+        description="Run the example notebooks in order.",
         concurrency=1,
         activities=[
-            m.WaitActivity(name="example_step", wait_time_in_seconds=1),
+            *run_databricks_job(
+                settings,
+                name="example",
+                job_id=job_ids[DATABRICKS_JOBS[0].name],
+            ),
         ],
     )
 ```
 
-Every definition exports:
+That file is the complete registration. Deployment scans `pl_*.py` definitions automatically. Every definition exports:
 
 - `NAME`: a unique ADF pipeline name.
-- `build_pipeline(settings)`: returns the complete Azure SDK `PipelineResource`. `settings` contains the root `.env` configuration; it can be unused for a simple example.
+- `DATABRICKS_JOBS`: optional serverless job declarations. Plain notebook paths run sequentially.
+- `build_pipeline(settings, job_ids)`: returns the complete Azure SDK `PipelineResource`; `job_ids` contains generated IDs keyed by declared job name.
 
-The sales definition triggers a Databricks Job deployed by the provisioner. For other job definitions, call `run_databricks_job` from `adf.activities`. For pipeline dependencies, follow `pl_master_etl.py`: use `execute_pipeline` and set `after` to the preceding activity name. The helper waits for completion and requires success. Notebook paths belong to the Databricks job tasks configured in `provisioner/databricks.py`; use `settings.notebook_workspace_path("your_notebook")` there. Adding a pipeline definition alone does not create another Databricks job.
+Notebook paths are relative to `DATABRICKS_NOTEBOOK_PATH` and omit `.py`. Deployment rejects missing, absolute, parent-relative, or `.py` paths before cloud writes. Use `notebook_task(...)` from `adf.jobs` only when a job needs a custom dependency graph.
 
-## 2. Import and register it
-
-In `src/adf/defs/__init__.py`, add **one import** and include the module in `PIPELINES`:
+For a parent ADF pipeline, declare child names and use `execute_pipeline`:
 
 ```python
-from adf.defs import pl_demo_pipeline, pl_master_etl, pl_sales_pipeline
-from adf.defs import pl_example  # New import
-
-PIPELINES = (
-    pl_sales_pipeline,
-    pl_demo_pipeline,
-    pl_example,  # New registration
-    pl_master_etl,
-)
+PIPELINE_DEPENDENCIES = ("pl_example",)
 ```
 
-That is the only registration needed. Keep `__init__.py` limited to imports and `PIPELINES`.
+Discovery deploys children before parents and rejects missing or cyclic dependencies.
 
-`src/adf/deploy.py` builds and deploys every registered definition. The command-line choices, run validation, and deployment summary also read this registry; no additional name lists need editing.
-
-Order entries so child pipelines are deployed before pipelines that reference them. `uv run solution run-adf` defaults to `pl_master_etl`. Registration makes a pipeline deployable and runnable independently; to include it in the master flow, add an `ExecutePipelineActivity` to `pl_master_etl.py` with its success dependency.
-
-## 3. Deploy and run
+## Deploy and run
 
 From the repository root, with Azure already provisioned and `.env` configured:
 
@@ -184,16 +184,14 @@ uv run solution run-adf  # Run the master
 uv run solution run-adf pl_example  # Run an individual pipeline
 ```
 
-The first command uploads all course notebooks, utilities and data and creates or updates all registered ADF pipelines. The run commands execute a pipeline in Azure and wait for its result. You can also run it from ADF Studio.
+The first command uploads every notebook and utility, creates or resets every declared Databricks job, and deploys every discovered ADF pipeline. Generated job IDs remain deployment output; do not add them to `.env`.
 
-For a new transformation notebook, add a Python notebook starting with `# Databricks notebook source` under `databricks-etl-pipeline/src/notebooks/`. The deploy command automatically uploads all Python notebooks and shared utilities into the `DATABRICKS_NOTEBOOK_PATH` folder using `DATABRICKS_TOKEN`. Subfolders are preserved and notebook filenames lose `.py`; for example, `finance/report.py` is referenced as `settings.notebook_workspace_path("finance/report")`. Keep imported utilities beside their notebooks. Students execute and validate Spark transformations online in Databricks.
-
-Removing a module from `PIPELINES` stops future deployment of that definition; it does not delete a pipeline already deployed to Azure.
+Removing a definition stops future updates; it does not delete an existing ADF pipeline or Databricks job.
 
 ## Format
 
 ```bash
-uv run prek run --files azure-data-factory-pipeline/src/adf/defs/pl_example.py azure-data-factory-pipeline/src/adf/defs/__init__.py
+uv run prek run --files azure-data-factory-pipeline/src/adf/defs/pl_example.py
 ```
 
 Check pipeline execution in ADF Studio. This component has no local test suite.
