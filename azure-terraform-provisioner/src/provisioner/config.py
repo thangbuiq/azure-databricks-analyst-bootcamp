@@ -20,10 +20,6 @@ def repository_root() -> Path:
 @dataclass(frozen=True)
 class Settings:
     root: Path
-    poll_seconds: int = 15
-    timeout_seconds: int = 3600
-    adf_api_retries: int = 3
-    adf_api_retry_interval_seconds: int = 30
     subscription_id: str = ""
     tenant_id: str = ""
     client_id: str = ""
@@ -115,8 +111,6 @@ def load_settings(env_file: Path | None = None) -> Settings:
         notebook_path=get("DATABRICKS_NOTEBOOK_PATH", defaults.notebook_path).rstrip("/"),
         databricks_catalog=get("DATABRICKS_CATALOG", defaults.databricks_catalog),
     )
-    if s.poll_seconds <= 0 or s.timeout_seconds <= 0:
-        raise ValueError("poll_seconds and timeout_seconds in config.py must be positive")
     if s.storage_account and not re.fullmatch(r"[a-z0-9]{3,24}", s.storage_account):
         raise ValueError("STORAGE_ACCOUNT must be 3-24 lowercase letters/numbers")
     if not s.notebook_path.startswith("/Shared/") or ".." in s.notebook_path.split("/"):

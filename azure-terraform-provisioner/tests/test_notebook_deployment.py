@@ -11,56 +11,11 @@ from provisioner import databricks
 from provisioner.config import Settings
 
 
-def test_serverless_jobs_are_created_once_and_reused_by_notebook_path(tmp_path):
-    from databricks.sdk.service import jobs
-
-    settings = Settings(root=tmp_path)
-    path = settings.notebook_workspace_path("who/01_staging")
-    client = Mock()
-    client.jobs.list.return_value = []
-    client.jobs.create.return_value = jobs.CreateResponse(job_id=123)
-    assert databricks.deploy_notebook_jobs(settings, [path, path], client) == {path: "123"}
-    client.jobs.create.assert_called_once()
-    created = client.jobs.create.call_args.kwargs
-    assert created["tasks"][0].notebook_task.notebook_path == path
-    assert created["tasks"][0].new_cluster is None
-    assert created["tasks"][0].existing_cluster_id is None
-    client.jobs.list.return_value = [jobs.BaseJob(job_id=123, settings=jobs.JobSettings(**created))]
-    client.jobs.create.reset_mock()
-    assert databricks.deploy_notebook_jobs(settings, [path], client) == {path: "123"}
-    client.jobs.create.assert_not_called()
-    client.jobs.reset.assert_called_once()
-
-
-def test_job_provisioning_refuses_to_overwrite_an_unowned_job(tmp_path):
-    from databricks.sdk.service import jobs
-
-    settings = Settings(root=tmp_path)
-    client = Mock()
-    client.jobs.list.side_effect = lambda name: [jobs.BaseJob(job_id=123, settings=jobs.JobSettings(name=name))]
-    with pytest.raises(ValueError, match="not managed by this deployment"):
-        databricks.deploy_notebook_jobs(settings, [settings.notebook_workspace_path("sales/01_sales_demo")], client)
-    client.jobs.reset.assert_not_called()
-
-
-def test_job_provisioning_refuses_ambiguous_remote_jobs(tmp_path):
-    from databricks.sdk.service import jobs
-
-    client = Mock()
-    client.jobs.list.side_effect = lambda name: [
-        jobs.BaseJob(job_id=number, settings=jobs.JobSettings(name=name)) for number in (1, 2)
-    ]
-    with pytest.raises(ValueError, match="Multiple Databricks jobs"):
-        databricks.deploy_notebook_jobs(Settings(root=tmp_path), ["/Shared/test/notebook"], client)
-    client.jobs.create.assert_not_called()
-    client.jobs.reset.assert_not_called()
-
-
-def test_uploads_all_sources_without_jobs_or_staging_files(tmp_path, monkeypatch):
+def test_uploads_all_sources_without_staging_files(tmp_path, monkeypatch):
     settings = Settings(root=tmp_path, storage_account="courseaccount")
     source = settings.notebook_source_dir
     (source / "who").mkdir(parents=True)
-    notebook_source = '# Databricks notebook source\ntarget_table = "workspace.dm_who.stg_suicide"\n'
+    notebook_source = '# Databricks notebook source\ntarget_table = "bnstprod.dm_who.stg_suicide"\n'
     (source / "who/staging.py").write_text(notebook_source)
     (source / "utils.py").write_text("VALUE = 1\n")
     client = Mock()
@@ -72,7 +27,6 @@ def test_uploads_all_sources_without_jobs_or_staging_files(tmp_path, monkeypatch
     assert notebook["content"].decode() == notebook_source
     assert notebook["format"].value == "SOURCE"
     assert uploads[settings.notebook_path + "/utils.py"]["format"].value == "AUTO"
-    assert client.jobs.mock_calls == []
     assert client.files.mock_calls == []
     assert client.volumes.mock_calls == []
 

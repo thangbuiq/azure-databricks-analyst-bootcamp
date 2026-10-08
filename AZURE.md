@@ -84,7 +84,7 @@ Takes a few minutes. It creates the Azure resources, links Databricks to storage
 - Databricks → **Workspace** → **Shared** → `analytics-demo`: notebooks.
 - Databricks → **Catalog**: schemas `dm_sales`, `dm_who`.
 
-Then follow [DEMO.md](DEMO.md). The notebooks hard-code `bdastorageaccountmaster` and the `workspace` catalog. Edit those values in the first code cell to match your `.env`.
+Then follow the numbered end-to-end steps in [README.md](README.md). The notebooks hard-code example storage and catalog values. Edit those values in the first code cell to match your `.env` when needed.
 
 ## Troubleshooting
 
@@ -101,7 +101,7 @@ Then follow [DEMO.md](DEMO.md). The notebooks hard-code `bdastorageaccountmaster
 
 ## Reference
 
-PAT authenticates ADF and notebook upload. An **Access Connector managed identity** authenticates Databricks access to storage. Sharing a resource group does not grant storage access. Notebook/job users other than the PAT owner need catalog/schema usage, table, and external-location grants in Catalog Explorer.
+The Databricks access token authenticates notebook upload and the ADF linked service. An **Access Connector managed identity** authenticates Databricks access to storage. Sharing a resource group does not grant storage access. Students running notebooks need catalog/schema usage, table, and external-location grants in Catalog Explorer.
 
 ## Provision and deploy
 
@@ -115,13 +115,13 @@ Or run `uv run solution setup` for both steps.
 
 Terraform manages the resource group, HNS-enabled ADLS account, `raw`/`lakehouse`/`reports` containers, ADF, Access Connector, and its Storage Blob Data Contributor assignment. Keep Terraform state and `.env` private. Existing resources outside this state require import before applying; do not replace an existing storage account to adopt it.
 
-Deployment creates/reuses a Unity Catalog credential and three external locations, creates `dm_sales` and `dm_who`, uploads notebooks, and provisions ADF linked services. Existing locations/credentials with conflicting settings cause an error instead of being changed.
+Deployment creates/reuses a Unity Catalog credential and three external locations, creates `dm_sales` and `dm_who`, and uploads notebooks. It provisions the Azure Data Factory resource, but linked services and pipelines are created in ADF Studio. Existing locations/credentials with conflicting settings cause an error instead of being changed.
 
 Role assignments can take a few minutes to propagate. If Databricks rejects initial storage validation, wait and rerun `solution deploy`. Storage firewalls must permit serverless access. See [managed identity configuration](https://learn.microsoft.com/en-us/azure/databricks/connect/unity-catalog/cloud-storage/azure-managed-identities).
 
 ## Execute
 
-Run notebooks online or create a native **Databricks Job** activity in ADF Studio using `ls_azure_databricks_serverless`. Create/select the serverless job and notebook tasks there. Or define `run_databricks_job(settings, name="who", notebook_path="who/01_staging")` in a `pl_*.py` file and run `solution deploy --with-pipelines`: deployment creates/reuses the job and resolves its ID automatically. Python pipeline files are optional.
+Run notebooks online in Databricks, or create a Databricks **Notebook** activity in ADF Studio. Follow [README.md](README.md) to create an all-purpose cluster, configure the Azure Databricks linked service with an access token, select the cluster, and build an ADF pipeline from the uploaded notebook paths.
 
 Raw reads use `abfss://raw@<account>.dfs.core.windows.net/...`; Delta tables use `abfss://lakehouse@<account>.dfs.core.windows.net/<schema>/<table>`. [WHO example](DEMO.md).
 

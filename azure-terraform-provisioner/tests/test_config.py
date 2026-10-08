@@ -5,7 +5,7 @@ def test_configuration_loads_before_cloud_validation(tmp_path):
     from provisioner.config import load_settings
 
     s = load_settings(tmp_path / ".env")
-    assert s.poll_seconds > 0
+    assert s.factory_name == "adf-analytics-demo"
 
 
 def test_env_path_is_independent_of_cwd(tmp_path, monkeypatch):

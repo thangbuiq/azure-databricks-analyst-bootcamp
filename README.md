@@ -1,138 +1,134 @@
 # Azure Databricks analyst bootcamp
 
 [![Azure Databricks](https://img.shields.io/badge/Azure-Databricks-0078D4?style=for-the-badge&logo=microsoftazure)](https://azure.microsoft.com/products/databricks)
-[![Databricks](https://img.shields.io/badge/Databricks-Serverless-FF3621?style=for-the-badge&logo=databricks)](https://databricks.com)
+[![Databricks](https://img.shields.io/badge/Databricks-Analytics-FF3621?style=for-the-badge&logo=databricks)](https://databricks.com)
 [![PySpark](https://img.shields.io/badge/PySpark-Analytics-E25A1C?style=for-the-badge&logo=apachespark)](https://spark.apache.org/)
 [![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=for-the-badge&logo=python)](https://www.python.org/)
 
-**Azure Storage → Azure Databricks serverless → Delta tables → Power BI**, orchestrated with native ADF Job activities.
+**Azure Storage → Azure Databricks → Delta tables → Power BI**, with Azure Data Factory (ADF) Studio orchestrating notebook runs.
 
-Students run PySpark online in Databricks. Local Python automates Terraform, Unity Catalog storage setup, linked services and notebook upload.
+Students run PySpark online in Databricks. Local Python automates Azure infrastructure, Unity Catalog storage setup, and notebook upload. ADF linked services and pipelines are created in the ADF Studio interface.
 
 ![Azure Databricks bootcamp architecture](.github/images/architecture.excalidraw.png)
 
-## Configure
+## 1. Prepare your computer and Azure access
+
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and the [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli). Follow [Azure setup](AZURE.md) to sign in, prepare deployment credentials, create or select an Azure Databricks workspace, and fill in `.env`.
+
+From the repository root, install the project tools and create the environment file:
 
 ```bash
 uv sync --locked
 cp .env.example .env
 ```
 
-Preserve an existing `.env`. Fill in [.env.example](.env.example): Azure deployment credentials, `RESOURCE_GROUP`, `AZURE_LOCATION`, `STORAGE_ACCOUNT`, `DATA_FACTORY`, `DATABRICKS_HOST`, `DATABRICKS_TOKEN`, and `DATABRICKS_CATALOG` (an existing Unity Catalog catalog).
+If `.env` already exists, keep it and update only the needed values. Configure `AZURE_SUBSCRIPTION_ID`, `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `RESOURCE_GROUP`, `AZURE_LOCATION`, `STORAGE_ACCOUNT`, `DATA_FACTORY`, `DATABRICKS_HOST`, `DATABRICKS_TOKEN`, and `DATABRICKS_CATALOG`. The workspace URL should look like `https://adb-....azuredatabricks.net`.
 
-Use your existing **Azure Databricks** workspace URL, `https://adb-....azuredatabricks.net`. The workspace is not created by this repository. Resource group/location should match the storage deployment; an existing Terraform deployment must retain its state and resource names.
+## 2. Provision Azure resources and upload notebooks
 
-The deployment service principal needs Owner (Contributor alone fails with `403 roleAssignments/write`). New to Azure? Follow the step-by-step [Azure setup](AZURE.md). The Databricks PAT owner needs `CREATE STORAGE CREDENTIAL`, `CREATE EXTERNAL LOCATION`, and `USE CATALOG` / `CREATE SCHEMA` on the target catalog. A workspace/metastore administrator can grant these.
-
-## Deploy
+Run setup from the repository root:
 
 ```bash
 uv run solution setup
 ```
 
-This provisions:
+Setup provisions ADLS Gen2 with `raw`, `lakehouse`, and `reports` containers; an Access Connector with storage permissions; Unity Catalog storage credentials, external locations, and `dm_sales` / `dm_who` schemas; Azure Data Factory; and the course notebooks uploaded under `/Shared/analytics-demo` by default. It also uploads the sales fixture to `raw/sales/sales.csv`.
 
-- ADLS Gen2 storage with `raw`, `lakehouse`, and `reports` containers.
-- An Access Connector with managed identity and Storage Blob Data Contributor access.
-- Unity Catalog storage credential, external locations and `dm_sales` / `dm_who` schemas.
-- ADF linked services `ls_azure_databricks_serverless` (PAT) and `ls_azure_storage`.
-- All notebooks/utilities under `databricks-etl-pipeline/src/notebooks/`, uploaded to `DATABRICKS_NOTEBOOK_PATH`.
+Setup does not create ADF linked services, pipelines, or Databricks jobs. You will create an interactive cluster, linked service, and pipeline in their respective user interfaces in the next steps. Storage access uses the Access Connector managed identity; the Databricks token is used to authenticate notebook upload and ADF workspace access.
 
-It also uploads the small sales fixture to `raw/sales/sales.csv`. It does not create Databricks jobs or ADF pipelines by default. Use `--with-pipelines` to deploy notebook-path definitions and their jobs automatically. Storage access uses the Access Connector identity, not the PAT or notebook-embedded account keys. Merely placing resources in the same resource group does not grant access.
+For an existing deployment, `uv run solution provision` applies Terraform and `uv run solution deploy` configures storage and uploads notebooks. Run `uv run solution setup` for both operations. Keep Terraform state and resource names; import any existing resources that are not in this Terraform state before provisioning.
 
-For an existing deployment, run `uv run solution provision` once to add the connector, then `uv run solution deploy`. Storage role propagation can take a few minutes; rerun deploy if initial storage validation reports access denied. Existing resources created outside this Terraform state must be imported before provisioning; do not recreate or rename an existing data-bearing account.
+## 3. Create an all-purpose cluster in Databricks
 
-## Run notebooks and ADF
+1. Open your Azure Databricks workspace and select **Compute**.
+2. Select **Create compute**. Name the cluster `adf-course-cluster`.
+3. Choose an available Databricks Runtime and a small node type. Set auto-termination to stop the cluster after it is idle.
+4. Select **Create compute** and wait until the cluster is **Running**.
 
-Open a deployed notebook and select **Serverless → Run All**. The first code cell contains hard-coded paths and table names. Edit them directly if needed; deployment does not rewrite them.
+![Databricks all-purpose cluster configuration](azure-data-factory-pipeline/images/adf-databricks-create-all-purpose-cluster.png)
 
-In **ADF Studio**:
+ADF will connect to this existing interactive cluster. If cluster creation is restricted in your workspace, ask your administrator which all-purpose cluster to use.
 
-1. Add an **Azure Databricks Job** activity.
-2. Select `ls_azure_databricks_serverless`.
-3. Create/select a Databricks job and configure its notebook task(s), using the uploaded workspace paths and serverless compute.
-4. Publish and **Trigger now**, or add a schedule trigger.
-5. Open **Monitor → activity output** and follow the Databricks run link for execution details.
+## 4. Create a Databricks access token
 
-Serverless supports the native **Job** activity. ADF still requires a Databricks job; you can create it from ADF Studio. With Python definitions, deployment handles job creation and IDs automatically. No Databricks Web activities are used.
+ADF uses a Databricks access token to connect to the workspace.
 
-A different student/job run identity needs Unity Catalog grants: `USE CATALOG`, `USE SCHEMA`, `CREATE TABLE`, `SELECT` / `MODIFY` on course tables, `READ FILES` on raw, and `CREATE EXTERNAL TABLE`, `READ FILES` / `WRITE FILES` on lakehouse (read/write on reports). Grant these through Catalog Explorer. Storage firewalls also need to permit serverless access.
+1. In Databricks, select your user icon, then **Settings**.
+2. Open **Developer** and select **Manage** beside **Access tokens**.
+3. Select **Generate new token**, enter `Azure Data Factory` as the description, and set an expiry.
+4. Generate the token and copy it immediately. Keep it private; you will paste it into ADF.
 
-For a complete worked example, follow the [WHO demo](DEMO.md): it shows the four notebook transformations, Delta writes, ADF orchestration and Power BI model.
+If token creation is disabled, ask your workspace administrator to enable it or provide the approved authentication method for the course.
 
-## Simple pipeline deployment
+## 5. Create the Azure Databricks linked service in ADF
 
-**Add a notebook, give its path, deploy. That's it.** No job IDs, job declarations, registry edits, or provisioner changes.
+1. Open your Data Factory in the Azure portal and select **Launch Studio**.
+2. In ADF Studio, select **Manage** (toolbox icon), then **Linked services**.
+3. Select **+ New**, search for **Azure Databricks**, and select **Continue**.
+4. Enter the name `ls_azure_databricks`.
+5. Keep `AutoResolveIntegrationRuntime` unless your instructor specified another integration runtime.
+6. Choose **From Azure subscription**, then select your subscription and Databricks workspace. If it is not listed, choose **Enter manually** and provide the workspace URL.
+7. For **Select cluster**, choose **Existing interactive cluster**, then select `adf-course-cluster`.
+8. Set **Authentication type** to **Access Token** and paste the token from Step 4.
+9. Select **Test connection**. When it succeeds, select **Create**.
 
-Create `azure-data-factory-pipeline/src/adf/defs/pl_example.py`:
+![ADF Azure Databricks linked service configuration](azure-data-factory-pipeline/images/adf-create-linked-service.png)
 
-```python
-from azure.mgmt.datafactory import models as m
-from adf.activities import run_databricks_job
+The example screenshot masks the token. Never include an actual token in screenshots, notebooks, or source control.
 
-NAME = "pl_example"
+## 6. Create a pipeline and add notebook activities
 
+1. In ADF Studio, select **Author** (pencil icon).
+2. In **Factory Resources**, select **+** and then **Pipeline**. Name it `WHO_Suicide_Rates_Pipeline`.
+3. Search the **Activities** pane for `Databricks`, then drag a **Notebook** activity onto the canvas.
+4. Rename the activity `stg_suicide`. Select it, open **Azure Databricks**, and choose `ls_azure_databricks`.
+5. Open **Settings** and enter `/Shared/analytics-demo/who/01_staging` as the notebook path.
 
-def build_pipeline(settings):
-    staging = run_databricks_job(
-        settings,
-        name="staging",
-        notebook_path="who/01_staging",
-    )
-    country = run_databricks_job(
-        settings,
-        name="country",
-        notebook_path="who/02_dim_country_year",
-        after=staging,
-    )
+![Add a Databricks Notebook activity and set its notebook path](azure-data-factory-pipeline/images/adf-create-databricks-activity.png)
 
-    return m.PipelineResource(activities=[staging, country])
-```
+Add three more Notebook activities with the same linked service and these names and paths:
 
-```bash
-uv run solution deploy --with-pipelines
-uv run solution run-adf pl_example
-```
+| Activity name | Notebook path |
+|---|---|
+| `dim_country_year` | `/Shared/analytics-demo/who/02_dim_country_year` |
+| `dim_demographic` | `/Shared/analytics-demo/who/03_dim_demographic` |
+| `fact_suicide_rate` | `/Shared/analytics-demo/who/04_fact_suicide_rate` |
 
-Paths are relative to `databricks-etl-pipeline/src/notebooks/`, without `.py`. Deployment uploads notebooks, creates/reuses the serverless jobs and wires their IDs into **native ADF Job activities**. `after=staging` makes `country` wait for staging to succeed. The teaching notebooks use hard-coded values, so no parameters are needed.
+If you changed `DATABRICKS_NOTEBOOK_PATH` before setup, replace `/Shared/analytics-demo` in each path with your selected folder. Use **Browse** to select each notebook from the workspace.
 
-The included WHO pipeline runs all four tables:
+## 7. Connect the activities and run the pipeline
 
-```bash
-uv run solution run-adf pl_who_pipeline
-```
+Connect the green **Succeeded** output from `stg_suicide` to both dimension activities. Then connect the green **Succeeded** output from each dimension activity to `fact_suicide_rate`. This runs staging first, the two dimensions in parallel, then the fact table.
 
-`pl_master_etl` runs sales then the dummy demo child on success. It also needs no job ID.
+![Completed WHO Databricks pipeline dependency graph](azure-data-factory-pipeline/images/adf-final-pipeline-example-who.png)
 
-Python definitions remain **optional**. Normal `solution deploy` provisions linked services and notebooks without updating pipelines or jobs. You can instead build pipelines and create/select jobs in ADF Studio. `run-adf` accepts Studio-only pipelines too.
+1. Select **Validate** and fix any configuration errors.
+2. Select **Debug** and wait for the run to finish. Confirm all four activities succeeded.
+3. Select **Publish all** to save the pipeline.
+4. To run it again, select **Add trigger** → **Trigger now**. To schedule runs, create a schedule trigger and publish it.
+5. Use **Monitor** to view pipeline and activity results. Open a failed activity for its error details and check the related notebook run in Databricks.
 
-`--with-pipelines` updates matching definitions and their repository-owned jobs; it can overwrite Studio edits to those objects. Removed definitions do not delete deployed objects. [More examples](azure-data-factory-pipeline/README.md).
+Validation checks pipeline configuration; Debug executes the notebook code. ADF Notebook activities use the interactive cluster selected in the linked service.
 
-The notebooks use separate Markdown and code cells for locations, transforms, writes and `OPTIMIZE`. Each write prints its table and storage path. They contain no widgets, assertions, or repeated count/display checks. Values are hard-coded for `bdastorageaccountmaster` and the `workspace` catalog; changing `.env` does not change notebook code.
+## 8. Check storage permissions and run the notebooks directly
 
-## Data locations
+The Databricks identity executing a notebook needs Unity Catalog permissions on the catalog, schemas, tables, and external locations. The token owner used by setup may already have the required grants; other students may need `USE CATALOG`, `USE SCHEMA`, table permissions, and the appropriate external-location permissions from a workspace administrator. Storage firewalls must allow Databricks access.
 
-| Data | Azure Storage path | Unity Catalog table |
-|---|---|---|
-| Sales source | `raw/sales/sales.csv` | — |
-| Sales Delta | `lakehouse/dm_sales/sales_bronze`, `sales_silver`, `sales_gold` | `<catalog>.dm_sales.analytics_demo_sales_*` |
-| WHO source | `raw/who/global_suicide_rates_real_who_worldbank.csv` | — |
-| WHO Delta | `lakehouse/dm_who/<table>` | `<catalog>.dm_who.<table>` |
-| Sales Parquet | `reports/sales/` (Spark part files) | — |
+You can also open a deployed notebook in Databricks and select **Run all**. The course notebooks use hard-coded paths and table names; edit their location cells directly when your storage account or catalog differs from the example.
 
-Notebooks use `abfss://<container>@<account>.dfs.core.windows.net/...`. Each Delta table has its own directory with a `_delta_log`. These are external Unity Catalog tables in your storage account. Power BI can query the tables through a Databricks SQL warehouse; use [DEMO.md](DEMO.md) for the WHO solution and report examples.
+For the transformations and table design, see the [WHO worked demo](DEMO.md). For Power BI loading instructions, see [Power BI business report](powerbi-business-report/README.md).
 
-## Load Parquet into Power BI from Azure Blob
+## 9. Load the sales Parquet output into Power BI
 
-The sales notebook writes Parquet part files to `reports/sales/`. In Power BI Desktop, use **Get data → Azure Blob Storage**, enter your storage account, and sign in with the **account key** from the Azure portal (**Security + networking → Access keys**, key1), not the Databricks PAT.
+The sales notebook writes Parquet part files under `reports/sales/`. In Power BI Desktop, select **Get data** → **Azure Blob Storage**, enter your storage account, and sign in with the storage account key from Azure Portal (**Security + networking** → **Access keys**), not the Databricks token.
 
 ![Storage account access keys](.github/images/powerbi-storage-account-access-key.png)
 
-Check the `reports` container and select **Transform Data**. Spark also writes `_SUCCESS` and other metadata files, so keep only the `.parquet` part files.
+Select the `reports` container and choose **Transform Data**. Spark also writes metadata files, so keep only `.parquet` part files.
 
 ![Choose the reports container](.github/images/powerbi-azure-blob-choose-reports-container.png)
 
-In **Advanced Editor**, use this query (replace `<storage-account>`) and rename it `SalesReport`:
+In **Advanced Editor**, replace `<storage-account>` and rename the query `SalesReport`:
 
 ```powerquery
 let
@@ -147,26 +143,32 @@ in
 
 ![Power Query result](.github/images/powerbi-power-query.png)
 
-More report steps: [powerbi-business-report](powerbi-business-report/README.md).
+More report steps: [Power BI business report](powerbi-business-report/README.md).
 
-## Checks and cleanup
+## 10. Validate the repository and clean up Azure resources
+
+Run the repository checks when making code changes:
 
 ```bash
 uv run prek run --all-files
 uv run pytest
-uv run solution status YOUR_ADF_RUN_ID
+```
+
+To delete the Azure resource group and its contents:
+
+```bash
 uv run solution cleanup --confirm-resource-group YOUR_RESOURCE_GROUP
 ```
 
-Cleanup deletes the resource group and its contents, including your Azure Databricks workspace if it shares that group. It does not remove Databricks notebooks, jobs, or Unity Catalog metadata. Remove course tables/locations/credentials separately when retiring the course. Existing legacy jobs, Web pipelines and volume datasets are not automatically deleted by migration.
+Cleanup also deletes an Azure Databricks workspace if it is in that resource group. Databricks notebooks and Unity Catalog metadata are separate and remain until removed explicitly.
 
-## Repository
+## Repository map
 
 | Folder | Purpose |
 |---|---|
 | `azure-terraform-provisioner/` | Terraform and Python provisioning |
-| `azure-data-factory-pipeline/` | Linked services and optional ADF definitions |
-| `databricks-etl-pipeline/src/notebooks/` | Teaching notebooks and shared utilities |
+| `azure-data-factory-pipeline/images/` | Screenshots used by the ADF setup guide in this README |
+| `databricks-etl-pipeline/src/notebooks/` | Teaching notebooks and shared notebook utilities |
 | `powerbi-business-report/` | Reporting notes |
 
-[Azure setup](AZURE.md) · [WHO worked demo](DEMO.md) · [Native ADF Job activity](https://learn.microsoft.com/en-us/azure/data-factory/transform-data-databricks-job) · [Managed identity storage access](https://learn.microsoft.com/en-us/azure/databricks/connect/unity-catalog/cloud-storage/azure-managed-identities)
+[Azure setup details](AZURE.md) · [WHO worked demo](DEMO.md) · [ADF Notebook activity docs](https://learn.microsoft.com/en-us/azure/data-factory/transform-data-databricks-notebook) · [Managed identity storage access](https://learn.microsoft.com/en-us/azure/databricks/connect/unity-catalog/cloud-storage/azure-managed-identities)
