@@ -6,12 +6,14 @@ import sys
 from pathlib import Path
 
 from adf.deploy import pipeline_names
+
 from provisioner.config import load_settings
 
 
 def _deploy(settings, resources, with_pipelines=False):
     from adf.defs import discover_pipelines
     from adf.deploy import build_pipelines, deploy_pipelines
+
     from provisioner.databricks import configure_storage, deploy_notebooks
     from provisioner.storage import upload_fixture
 

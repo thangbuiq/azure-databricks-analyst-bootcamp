@@ -1,5 +1,5 @@
 # Databricks notebook source
-# ruff: noqa: F821
+
 # MAGIC %md
 # MAGIC # Sales — Bronze → Silver → Gold
 # MAGIC Read Azure Storage, write Delta tables, then export Gold as Parquet.
@@ -13,9 +13,9 @@
 # COMMAND ----------
 
 source_path = "abfss://raw@bdastorageaccountmaster.dfs.core.windows.net/sales/sales.csv"
-bronze_table = "workspace.dm_sales.analytics_demo_sales_bronze"
-silver_table = "workspace.dm_sales.analytics_demo_sales_silver"
-gold_table = "workspace.dm_sales.analytics_demo_sales_gold"
+bronze_table = "bnstprod.dm_sales.analytics_demo_sales_bronze"
+silver_table = "bnstprod.dm_sales.analytics_demo_sales_silver"
+gold_table = "bnstprod.dm_sales.analytics_demo_sales_gold"
 bronze_path = "abfss://lakehouse@bdastorageaccountmaster.dfs.core.windows.net/dm_sales/sales_bronze"
 silver_path = "abfss://lakehouse@bdastorageaccountmaster.dfs.core.windows.net/dm_sales/sales_silver"
 gold_path = "abfss://lakehouse@bdastorageaccountmaster.dfs.core.windows.net/dm_sales/sales_gold"

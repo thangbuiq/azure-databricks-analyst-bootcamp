@@ -21,6 +21,7 @@ def test_administrative_commands_do_not_discover_pipeline_definitions(tmp_path, 
 
     from adf import defs
     from adf import deploy as adf_deploy
+
     from provisioner import cli, terraform
 
     discovery = Mock(side_effect=ValueError("Duplicate ADF pipeline name: unfinished"))
@@ -66,10 +67,10 @@ def test_missing_notebook_fails_before_storage_or_azure_writes(tmp_path, monkeyp
     from types import SimpleNamespace
     from unittest.mock import Mock
 
-    from azure.mgmt.datafactory import models as m
-
     from adf import defs
     from adf.activities import run_databricks_job
+    from azure.mgmt.datafactory import models as m
+
     from provisioner import cli, databricks
     from provisioner.config import Settings
 
@@ -96,6 +97,7 @@ def test_deployment_always_provisions_connections_but_pipelines_are_optional(tmp
 
     from adf import defs
     from adf import deploy as adf_deploy
+
     from provisioner import cli, databricks, storage
     from provisioner.config import Settings
 

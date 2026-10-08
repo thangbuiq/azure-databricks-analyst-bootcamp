@@ -60,7 +60,7 @@ def test_uploads_all_sources_without_jobs_or_staging_files(tmp_path, monkeypatch
     settings = Settings(root=tmp_path, storage_account="courseaccount")
     source = settings.notebook_source_dir
     (source / "who").mkdir(parents=True)
-    notebook_source = '# Databricks notebook source\ntarget_table = "workspace.dm_who.stg_suicide"\n'
+    notebook_source = '# Databricks notebook source\ntarget_table = "bnstprod.dm_who.stg_suicide"\n'
     (source / "who/staging.py").write_text(notebook_source)
     (source / "utils.py").write_text("VALUE = 1\n")
     client = Mock()

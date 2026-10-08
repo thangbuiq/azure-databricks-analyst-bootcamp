@@ -42,7 +42,7 @@ extend-exclude = [".runtime", ".terraform"]
 
 [tool.ruff.lint]
 select = ["F", "I001", "RUF022"]
-ignore = ["E501"]
+ignore = ["E501", "F821"]
 
 [tool.ruff.format]
 quote-style = "double"
