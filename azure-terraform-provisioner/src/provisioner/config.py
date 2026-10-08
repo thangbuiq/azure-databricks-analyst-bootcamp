@@ -24,10 +24,6 @@ class Settings:
     timeout_seconds: int = 3600
     adf_api_retries: int = 3
     adf_api_retry_interval_seconds: int = 30
-    databricks_task_retries: int = 2
-    databricks_task_retry_interval_seconds: int = 60
-    databricks_task_timeout_seconds: int = 900
-    databricks_job_timeout_seconds: int = 3300
     subscription_id: str = ""
     tenant_id: str = ""
     client_id: str = ""
@@ -40,13 +36,15 @@ class Settings:
     databricks_token: str = field(default="", repr=False)
     notebook_path: str = "/Shared/analytics-demo"
     databricks_catalog: str = "workspace"
-    databricks_schema: str = "default"
-    databricks_volume: str = "analytics_demo"
+    databricks_schema: str = "dm_sales"
     table_prefix: str = "analytics_demo_sales"
 
     @property
-    def volume_path(self):
-        return f"/Volumes/{self.databricks_catalog}/{self.databricks_schema}/{self.databricks_volume}"
+    def storage_credential_name(self):
+        return f"course_{self.storage_account}"
+
+    def storage_url(self, container):
+        return f"abfss://{container}@{self.storage_account}.dfs.core.windows.net"
 
     @property
     def notebook_source_dir(self):
@@ -59,8 +57,16 @@ class Settings:
         if not self.databricks_host or not self.databricks_token:
             raise ValueError("Set DATABRICKS_HOST and DATABRICKS_TOKEN in .env before deploying")
         parsed = urlparse(self.databricks_host)
-        if parsed.scheme != "https" or not parsed.netloc:
-            raise ValueError("DATABRICKS_HOST must be an https workspace URL")
+        if (
+            parsed.scheme != "https"
+            or not (parsed.hostname or "").endswith(".azuredatabricks.net")
+            or parsed.path not in ("", "/")
+            or parsed.query
+            or parsed.fragment
+            or parsed.username
+            or parsed.port
+        ):
+            raise ValueError("DATABRICKS_HOST must be an https Azure Databricks workspace URL")
 
     @property
     def runtime_dir(self):
@@ -103,9 +109,12 @@ def load_settings(env_file: Path | None = None) -> Settings:
         client_secret=get("AZURE_CLIENT_SECRET"),
         storage_account=get("STORAGE_ACCOUNT"),
         factory_name=get("DATA_FACTORY", defaults.factory_name),
+        resource_group=get("RESOURCE_GROUP", defaults.resource_group),
+        location=get("AZURE_LOCATION", defaults.location),
         databricks_host=get("DATABRICKS_HOST").rstrip("/"),
         databricks_token=get("DATABRICKS_TOKEN"),
         notebook_path=get("DATABRICKS_NOTEBOOK_PATH", defaults.notebook_path).rstrip("/"),
+        databricks_catalog=get("DATABRICKS_CATALOG", defaults.databricks_catalog),
     )
     if s.poll_seconds <= 0 or s.timeout_seconds <= 0:
         raise ValueError("poll_seconds and timeout_seconds in config.py must be positive")
@@ -113,12 +122,18 @@ def load_settings(env_file: Path | None = None) -> Settings:
         raise ValueError("STORAGE_ACCOUNT must be 3-24 lowercase letters/numbers")
     if not s.notebook_path.startswith("/Shared/") or ".." in s.notebook_path.split("/"):
         raise ValueError("DATABRICKS_NOTEBOOK_PATH must be a folder below /Shared/")
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", s.databricks_catalog):
+        raise ValueError("DATABRICKS_CATALOG must contain only letters, digits and underscores")
     return s
 
 
 def notebook_parameters(settings):
     return {
-        "raw_path": f"{settings.volume_path}/raw/sales.csv",
+        "raw_path": f"{settings.storage_url('raw')}/sales/sales.csv",
         "table_prefix": f"{settings.databricks_catalog}.{settings.databricks_schema}.{settings.table_prefix}",
-        "report_path": f"{settings.volume_path}/reports/sales/report.parquet",
+        "lakehouse_path": settings.storage_url("lakehouse") + "/dm_sales",
+        "report_path": settings.storage_url("reports") + "/sales",
+        "catalog": settings.databricks_catalog,
+        "who_raw_path": settings.storage_url("raw") + "/who/global_suicide_rates_real_who_worldbank.csv",
+        "who_lakehouse_path": settings.storage_url("lakehouse") + "/dm_who",
     }

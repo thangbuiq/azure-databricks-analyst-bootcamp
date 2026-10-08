@@ -1,14 +1,13 @@
-from adf.deploy import factory_client, pipeline_names
+from adf.deploy import factory_client
 from provisioner.polling import wait_until
 
 
-def run_pipeline(settings, pipeline_name):
-    names = pipeline_names()
-    if pipeline_name not in names:
-        raise ValueError("Choose a registered pipeline: " + ", ".join(names))
+def run_pipeline(settings, pipeline_name, parameters=None):
     return (
         factory_client(settings)
-        .pipelines.create_run(settings.resource_group, settings.factory_name, pipeline_name)
+        .pipelines.create_run(
+            settings.resource_group, settings.factory_name, pipeline_name, parameters=parameters or {}
+        )
         .run_id
     )
 

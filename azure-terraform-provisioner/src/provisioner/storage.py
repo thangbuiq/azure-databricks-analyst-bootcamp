@@ -12,14 +12,6 @@ def credential(settings):
     return ClientSecretCredential(settings.tenant_id, settings.client_id, settings.client_secret)
 
 
-def download_fixture(settings, storage_account_key):
-    """Read the Azure source snapshot that deployment stages in a managed volume."""
-    with BlobServiceClient(
-        f"https://{settings.storage_account}.blob.core.windows.net", credential=storage_account_key
-    ) as service:
-        return service.get_blob_client("raw", "sales/sales.csv").download_blob().readall()
-
-
 def upload_fixture(settings, fixture_path, storage_account_key):
     with BlobServiceClient(
         f"https://{settings.storage_account}.blob.core.windows.net", credential=storage_account_key

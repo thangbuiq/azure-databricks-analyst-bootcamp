@@ -2,18 +2,24 @@
 # MAGIC %md
 # MAGIC # Sales: Bronze → Silver → Gold → Parquet
 # MAGIC Run each cell online on Serverless. Delta tables and files use Unity Catalog.
-# MAGIC Deployment stages the Azure source in a volume; ADF copies the finished report back to Azure.
+# MAGIC Read raw Azure Storage through Unity Catalog; write Delta tables and the report directly to Azure.
 
 # COMMAND ----------
 # ruff: noqa: F821
 import json
 
-from utils import setup_parameters, write_data
-
 # Deployment fills these non-secret widget defaults from the root .env.
 DEFAULT_PARAMETERS = {}
-params = setup_parameters(spark, dbutils, DEFAULT_PARAMETERS)
-tables = params["table_prefix"]
+dbutils.widgets.text("raw_path", DEFAULT_PARAMETERS.get("raw_path", ""))
+dbutils.widgets.text("table_prefix", DEFAULT_PARAMETERS.get("table_prefix", ""))
+dbutils.widgets.text("lakehouse_path", DEFAULT_PARAMETERS.get("lakehouse_path", ""))
+dbutils.widgets.text("report_path", DEFAULT_PARAMETERS.get("report_path", ""))
+raw_path = dbutils.widgets.get("raw_path")
+tables = dbutils.widgets.get("table_prefix")
+lakehouse_path = dbutils.widgets.get("lakehouse_path")
+report_path = dbutils.widgets.get("report_path")
+assert raw_path and tables and lakehouse_path and report_path, "Fill in the notebook widgets first"
+spark.conf.set("spark.sql.session.timeZone", "UTC")
 
 # COMMAND ----------
 # MAGIC %md
@@ -24,10 +30,15 @@ bronze = (
     spark.read.option("header", True)
     .option("mode", "FAILFAST")
     .schema("sale_id STRING, sale_date STRING, product STRING, category STRING, quantity STRING, unit_price STRING")
-    .csv(params["raw_path"])
+    .csv(raw_path)
 )
 assert bronze.count() == 10, "Expected 10 source rows"
-write_data(bronze, f"{tables}_bronze")
+(
+    bronze.write.format("delta")
+    .mode("overwrite")
+    .option("path", lakehouse_path + "/sales_bronze")
+    .saveAsTable(f"{tables}_bronze")
+)
 spark.table(f"{tables}_bronze").createOrReplaceTempView("bronze_sales")
 
 # COMMAND ----------
@@ -47,7 +58,12 @@ silver = spark.sql("""
              AS DECIMAL(24, 2)) AS revenue
     FROM bronze_sales
 """)
-write_data(silver, f"{tables}_silver")
+(
+    silver.write.format("delta")
+    .mode("overwrite")
+    .option("path", lakehouse_path + "/sales_silver")
+    .saveAsTable(f"{tables}_silver")
+)
 spark.table(f"{tables}_silver").createOrReplaceTempView("silver_sales")
 
 # COMMAND ----------
@@ -63,7 +79,12 @@ gold = spark.sql("""
     FROM silver_sales
     GROUP BY sale_date, category
 """)
-write_data(gold, f"{tables}_gold")
+(
+    gold.write.format("delta")
+    .mode("overwrite")
+    .option("path", lakehouse_path + "/sales_gold")
+    .saveAsTable(f"{tables}_gold")
+)
 
 # COMMAND ----------
 # MAGIC %md
@@ -72,8 +93,8 @@ write_data(gold, f"{tables}_gold")
 
 # COMMAND ----------
 gold = spark.table(f"{tables}_gold")
-write_data(gold, params["report_path"], format="parquet")
-report = spark.read.parquet(params["report_path"])
+gold.write.mode("overwrite").parquet(report_path)
+report = spark.read.parquet(report_path)
 report.createOrReplaceTempView("sales_report")
 totals = spark.sql("SELECT SUM(units) AS units, SUM(revenue) AS revenue FROM sales_report").first()
 assert silver.count() == 10 and report.count() == 2, "Unexpected row counts"

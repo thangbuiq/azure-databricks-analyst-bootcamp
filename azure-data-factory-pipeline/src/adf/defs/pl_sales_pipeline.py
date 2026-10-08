@@ -1,26 +1,22 @@
-"""Run the deployed Databricks job and copy its report to Azure."""
+"""Optional native ADF pipeline; deployment resolves the notebook path automatically."""
 
 from azure.mgmt.datafactory import models as m
 
-from adf.activities import copy_file, run_databricks_job
-from adf.connections import AZURE_REPORT, VOLUME_REPORT
-from adf.jobs import serverless_job
+from adf.activities import run_databricks_job
+from provisioner.config import notebook_parameters
 
 NAME = "pl_sales_pipeline"
-DATABRICKS_JOBS = (serverless_job("course-sales-etl", ("sales_demo",)),)
 
 
-def build_pipeline(settings, job_ids) -> m.PipelineResource:
+def build_pipeline(settings) -> m.PipelineResource:
+    sales = run_databricks_job(
+        settings,
+        name="sales",
+        notebook_path="sales_demo",
+        parameters=notebook_parameters(settings),
+    )
     return m.PipelineResource(
-        description="Run the serverless notebook, then copy its Parquet report from the volume to Azure.",
+        description="Run the sales serverless job; notebooks write directly to Azure Storage.",
         concurrency=1,
-        activities=[
-            *run_databricks_job(settings, name="sales", job_id=job_ids[DATABRICKS_JOBS[0].name]),
-            copy_file(
-                name="copy_report_to_azure",
-                source=VOLUME_REPORT,
-                destination=AZURE_REPORT,
-                after="sales_check",
-            ),
-        ],
+        activities=[sales],
     )

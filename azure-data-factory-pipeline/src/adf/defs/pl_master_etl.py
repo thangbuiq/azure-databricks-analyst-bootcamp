@@ -10,19 +10,12 @@ NAME = "pl_master_etl"
 PIPELINE_DEPENDENCIES = (SALES_PIPELINE, DEMO_PIPELINE)
 
 
-def build_pipeline(settings, _job_ids) -> m.PipelineResource:
+def build_pipeline(settings) -> m.PipelineResource:
+    sales = execute_pipeline(name="run_sales", pipeline=SALES_PIPELINE)
+    demo = execute_pipeline(name="run_demo", pipeline=DEMO_PIPELINE, after=sales)
+
     return m.PipelineResource(
         description="Master ETL: sales must succeed before the demo pipeline starts.",
         concurrency=1,
-        activities=[
-            execute_pipeline(
-                name="run_sales",
-                pipeline=SALES_PIPELINE,
-            ),
-            execute_pipeline(
-                name="run_demo",
-                pipeline=DEMO_PIPELINE,
-                after="run_sales",
-            ),
-        ],
+        activities=[sales, demo],
     )

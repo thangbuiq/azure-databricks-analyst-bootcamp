@@ -4,26 +4,25 @@
 
 Source: [Kaggle dataset](https://www.kaggle.com/datasets/samartalwar/global-suicide-rates-and-socioeconomic-indicators). The repository CSV contains 18,315 rows across 185 countries, 2000–2021.
 
-## 1. Prepare the data
+## 1. Storage and deployment
 
-Run in a Databricks SQL cell:
+Set root `.env` for your Azure Databricks workspace, token, storage account and existing Unity Catalog catalog, then run:
 
-```sql
-CREATE SCHEMA IF NOT EXISTS workspace.dm_who;
-CREATE VOLUME IF NOT EXISTS workspace.dm_who.analytics_demo;
+```bash
+uv run solution setup
 ```
 
-Download the `global_suicide_rates_real_who_worldbank.csv`. Upload it in Databricks Catalog Explorer to **workspace → dm_who → analytics_demo → raw/who**:
+Deployment configures an Access Connector, Unity Catalog external locations and `dm_who`. Keep the source CSV in Azure at:
 
 ```text
-/Volumes/workspace/dm_who/analytics_demo/raw/who/global_suicide_rates_real_who_worldbank.csv
+abfss://raw@<STORAGE_ACCOUNT>.dfs.core.windows.net/who/global_suicide_rates_real_who_worldbank.csv
 ```
 
-Alternatively, upload `data/global_suicide_rates_real_who_worldbank.csv` from this repository. This is a snapshot: upload again when the Azure CSV changes.
+The existing Blob URL and this `abfss` URL address the same file when the account matches. No upload to Databricks is needed. Delta data is written to `lakehouse/dm_who/<table>` in that storage account.
 
 ## 2. Create four notebooks
 
-Create these files in **`databricks-etl-pipeline/src/notebooks/who/`**. Each writes exactly one table. Use these four files instead of the earlier eight-file layout.
+These files are included in **`databricks-etl-pipeline/src/notebooks/who/`**. Each writes exactly one table. Deployment fills the non-secret widget defaults. `workspace` below means your configured `DATABRICKS_CATALOG`.
 
 | File | Table in `workspace.dm_who` | Grain | Rows |
 |---|---|---|---:|
@@ -40,12 +39,19 @@ dim_country_year ── country_year_key ── fact_suicide_rate ── demogra
 
 ```python
 # Databricks notebook source
-raw = (
-    spark.read.option("header", True)
-    .option("inferSchema", False)
-    .option("mode", "FAILFAST")
-    .csv("/Volumes/workspace/dm_who/analytics_demo/raw/who/global_suicide_rates_real_who_worldbank.csv")
-)
+# ruff: noqa: F821
+DEFAULT_PARAMETERS = {}
+dbutils.widgets.text("catalog", DEFAULT_PARAMETERS.get("catalog", "workspace"))
+dbutils.widgets.text("who_lakehouse_path", DEFAULT_PARAMETERS.get("who_lakehouse_path", ""))
+catalog = dbutils.widgets.get("catalog")
+lakehouse_path = dbutils.widgets.get("who_lakehouse_path")
+assert lakehouse_path.startswith("abfss://"), "Set who_lakehouse_path to the Azure lakehouse/dm_who path"
+dbutils.widgets.text("who_raw_path", DEFAULT_PARAMETERS.get("who_raw_path", ""))
+raw_path = dbutils.widgets.get("who_raw_path")
+assert raw_path.startswith("abfss://"), "Set who_raw_path to the Azure CSV path"
+
+# COMMAND ----------
+raw = spark.read.option("header", True).option("inferSchema", False).option("mode", "FAILFAST").csv(raw_path)
 raw.createOrReplaceTempView("raw_who")
 
 # COMMAND ----------
@@ -69,7 +75,12 @@ assert df.select("country_code", "year", "sex", "age_bracket", "generation").dis
 assert df.filter("country_code IS NULL OR year IS NULL OR suicide_rate_per_100k IS NULL").count() == 0
 assert df.filter("suicide_rate_per_100k < 0 OR isnan(suicide_rate_per_100k)").count() == 0
 
-df.write.mode("overwrite").saveAsTable("workspace.dm_who.stg_suicide")
+(
+    df.write.format("delta")
+    .mode("overwrite")
+    .option("path", lakehouse_path + "/stg_suicide")
+    .saveAsTable(f"{catalog}.dm_who.stg_suicide")
+)
 display(df.limit(10))
 ```
 
@@ -79,19 +90,33 @@ GDP and population repeat across source demographics. Keep one copy per country-
 
 ```python
 # Databricks notebook source
-df = spark.sql("""
+# ruff: noqa: F821
+DEFAULT_PARAMETERS = {}
+dbutils.widgets.text("catalog", DEFAULT_PARAMETERS.get("catalog", "workspace"))
+dbutils.widgets.text("who_lakehouse_path", DEFAULT_PARAMETERS.get("who_lakehouse_path", ""))
+catalog = dbutils.widgets.get("catalog")
+lakehouse_path = dbutils.widgets.get("who_lakehouse_path")
+assert lakehouse_path.startswith("abfss://"), "Set who_lakehouse_path to the Azure lakehouse/dm_who path"
+
+# COMMAND ----------
+df = spark.sql(f"""
     SELECT DISTINCT
         CONCAT(country_code, '_', CAST(year AS STRING)) AS country_year_key,
         country_code, country_name, year,
         gdp_usd, gdp_per_capita_usd, total_country_population
-    FROM workspace.dm_who.stg_suicide
+    FROM {catalog}.dm_who.stg_suicide
 """)
 
 assert df.count() == 4070
 assert df.select("country_year_key").distinct().count() == 4070
 assert df.filter("gdp_usd IS NULL").count() == 50
 
-df.write.mode("overwrite").saveAsTable("workspace.dm_who.dim_country_year")
+(
+    df.write.format("delta")
+    .mode("overwrite")
+    .option("path", lakehouse_path + "/dim_country_year")
+    .saveAsTable(f"{catalog}.dm_who.dim_country_year")
+)
 display(df.limit(10))
 ```
 
@@ -99,19 +124,33 @@ display(df.limit(10))
 
 ```python
 # Databricks notebook source
-df = spark.sql("""
+# ruff: noqa: F821
+DEFAULT_PARAMETERS = {}
+dbutils.widgets.text("catalog", DEFAULT_PARAMETERS.get("catalog", "workspace"))
+dbutils.widgets.text("who_lakehouse_path", DEFAULT_PARAMETERS.get("who_lakehouse_path", ""))
+catalog = dbutils.widgets.get("catalog")
+lakehouse_path = dbutils.widgets.get("who_lakehouse_path")
+assert lakehouse_path.startswith("abfss://"), "Set who_lakehouse_path to the Azure lakehouse/dm_who path"
+
+# COMMAND ----------
+df = spark.sql(f"""
     SELECT DISTINCT
         SHA2(TO_JSON(NAMED_STRUCT(
             'sex', sex, 'age_bracket', age_bracket, 'generation', generation
         )), 256) AS demographic_key,
         sex, age_bracket, generation
-    FROM workspace.dm_who.stg_suicide
+    FROM {catalog}.dm_who.stg_suicide
 """)
 
 assert df.count() == 36
 assert df.select("demographic_key").distinct().count() == 36
 
-df.write.mode("overwrite").saveAsTable("workspace.dm_who.dim_demographic")
+(
+    df.write.format("delta")
+    .mode("overwrite")
+    .option("path", lakehouse_path + "/dim_demographic")
+    .saveAsTable(f"{catalog}.dm_who.dim_demographic")
+)
 display(df)
 ```
 
@@ -119,75 +158,75 @@ display(df)
 
 ```python
 # Databricks notebook source
-df = spark.sql("""
+# ruff: noqa: F821
+DEFAULT_PARAMETERS = {}
+dbutils.widgets.text("catalog", DEFAULT_PARAMETERS.get("catalog", "workspace"))
+dbutils.widgets.text("who_lakehouse_path", DEFAULT_PARAMETERS.get("who_lakehouse_path", ""))
+catalog = dbutils.widgets.get("catalog")
+lakehouse_path = dbutils.widgets.get("who_lakehouse_path")
+assert lakehouse_path.startswith("abfss://"), "Set who_lakehouse_path to the Azure lakehouse/dm_who path"
+
+# COMMAND ----------
+df = spark.sql(f"""
     SELECT c.country_year_key, d.demographic_key, s.suicide_rate_per_100k
-    FROM workspace.dm_who.stg_suicide s
-    JOIN workspace.dm_who.dim_country_year c
+    FROM {catalog}.dm_who.stg_suicide s
+    JOIN {catalog}.dm_who.dim_country_year c
       ON s.country_code = c.country_code AND s.year = c.year
-    JOIN workspace.dm_who.dim_demographic d
+    JOIN {catalog}.dm_who.dim_demographic d
       ON s.sex = d.sex AND s.age_bracket = d.age_bracket AND s.generation = d.generation
 """)
 
 assert df.count() == 18315
 assert df.select("country_year_key", "demographic_key").distinct().count() == 18315
 
-df.write.mode("overwrite").saveAsTable("workspace.dm_who.fact_suicide_rate")
+(
+    df.write.format("delta")
+    .mode("overwrite")
+    .option("path", lakehouse_path + "/fact_suicide_rate")
+    .saveAsTable(f"{catalog}.dm_who.fact_suicide_rate")
+)
 display(df.limit(10))
 ```
 
-## 3. Add the ADF pipeline
+## 3. Simple ADF pipeline
 
-```text
-pl_who_pipeline
-  → POST jobs/run-now
-  → Until: wait 30 seconds → GET jobs/runs/get
-  → Check result_state = SUCCESS; otherwise fail
-```
-
-Create **`azure-data-factory-pipeline/src/adf/defs/pl_who_pipeline.py`**:
+The included `azure-data-factory-pipeline/src/adf/defs/pl_who_pipeline.py` is the complete definition:
 
 ```python
+"""Four notebooks, one table each; ADF controls the execution order."""
+
 from azure.mgmt.datafactory import models as m
 
 from adf.activities import run_databricks_job
-from adf.jobs import serverless_job
 
 NAME = "pl_who_pipeline"
-DATABRICKS_JOBS = (
-    serverless_job(
-        "course-who-etl",
-        notebooks=(
-            "who/01_staging",
-            "who/02_dim_country_year",
-            "who/03_dim_demographic",
-            "who/04_fact_suicide_rate",
-        ),
-    ),
-)
 
 
-def build_pipeline(settings, job_ids):
-    return m.PipelineResource(
-        description="Run the four WHO notebooks on Serverless.",
-        concurrency=1,
-        activities=[
-            *run_databricks_job(settings, name="who", job_id=job_ids[DATABRICKS_JOBS[0].name]),
-        ],
+def build_pipeline(settings):
+    staging = run_databricks_job(settings, name="staging", notebook_path="who/01_staging")
+    country = run_databricks_job(settings, name="country", notebook_path="who/02_dim_country_year", after=staging)
+    demographic = run_databricks_job(
+        settings, name="demographic", notebook_path="who/03_dim_demographic", after=staging
     )
+    fact = run_databricks_job(
+        settings, name="fact", notebook_path="who/04_fact_suicide_rate", after=[country, demographic]
+    )
+
+    return m.PipelineResource(concurrency=1, activities=[staging, country, demographic, fact])
 ```
 
-Plain notebook paths run sequentially in the listed order. Deployment uploads them, creates or updates `course-who-etl` on Serverless, and passes its generated ID to `build_pipeline`. No job ID or provisioner edit is required.
-
-The `*` inserts **who_start → who_wait → who_check**. The activities start the job, poll every 30 seconds, and fail ADF if a notebook task fails. The Azure Databricks Job activity rejects the course Free Edition URL, so the helper uses ADF Web activities and the Jobs API.
+Notebook paths are all you provide. Deployment creates/reuses serverless jobs and supplies IDs to native ADF Job activities. Both dimensions use `after=staging`, so they can run together after staging succeeds. The fact uses `after=[country, demographic]`, so it waits for both dimensions. No Web activities or manual job IDs.
 
 ## 4. Deploy and run
 
 ```bash
-uv run solution deploy
+uv run solution deploy --with-pipelines
 uv run solution run-adf pl_who_pipeline
 ```
 
-`solution deploy` automatically discovers `pl_who_pipeline.py`, validates its notebook paths, uploads all notebooks, deploys the Databricks job, and deploys ADF. In ADF Monitor, confirm **who_start → who_wait → who_check** succeed, then confirm the four tables under **workspace → dm_who**. ADF uses the staged CSV; it does not refresh the Azure-to-volume snapshot.
+Check **ADF Monitor → activity output → Databricks run** for notebook/Spark details. The `who_raw_path`, `who_lakehouse_path` and `catalog` widgets use defaults from `.env`; add `parameters={...}` to a helper call to override them.
+
+Python pipeline files are optional. To use ADF Studio instead, run plain `solution deploy`, add a **Databricks Job** activity, select `ls_azure_databricks_serverless`, then create/select a job with the four notebook tasks in order. Publish and trigger manually or add a schedule.
 
 ## 5. Power BI report examples — reference only
 

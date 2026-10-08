@@ -3,9 +3,6 @@
 import importlib
 import inspect
 import pkgutil
-from pathlib import Path
-
-from adf.jobs import ServerlessJob
 
 
 def discover_pipelines(package_name="adf.defs"):
@@ -22,9 +19,9 @@ def discover_pipelines(package_name="adf.defs"):
         if not isinstance(name, str) or not name.strip() or not callable(getattr(module, "build_pipeline", None)):
             raise ValueError(f"Pipeline module {module.__name__} must define NAME and build_pipeline")
         try:
-            inspect.signature(module.build_pipeline).bind(None, {})
+            inspect.signature(module.build_pipeline).bind(None)
         except TypeError as error:
-            raise ValueError(f"Pipeline {name}: build_pipeline must accept settings and job_ids") from error
+            raise ValueError(f"Pipeline {name}: build_pipeline must accept settings") from error
         if name in by_name:
             raise ValueError(f"Duplicate ADF pipeline name: {name}")
         by_name[name] = module
@@ -51,23 +48,3 @@ def discover_pipelines(package_name="adf.defs"):
     for name in by_name:
         visit(name)
     return tuple(ordered)
-
-
-def discover_jobs(pipelines, notebook_source_dir):
-    """Collect unique jobs and verify that each declared notebook source exists."""
-    source_dir = Path(notebook_source_dir)
-    jobs = []
-    names = set()
-    for pipeline in pipelines:
-        for job in getattr(pipeline, "DATABRICKS_JOBS", ()):
-            if not isinstance(job, ServerlessJob):
-                raise TypeError(f"Pipeline {pipeline.NAME} has an invalid Databricks job declaration")
-            if job.name in names:
-                raise ValueError(f"Duplicate Databricks job name: {job.name}")
-            names.add(job.name)
-            for task in job.tasks:
-                source = source_dir / (task.notebook_path + ".py")
-                if not source.is_file() or not source.read_text().startswith("# Databricks notebook source"):
-                    raise ValueError(f"Notebook does not exist: {task.notebook_path}")
-            jobs.append(job)
-    return tuple(jobs)

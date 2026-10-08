@@ -1,84 +1,55 @@
 """Reusable steps for Python-defined ADF pipelines."""
 
-from hashlib import sha256
+from pathlib import PurePosixPath
 
 from azure.mgmt.datafactory import models as m
 
+from adf.connections import DATABRICKS_SERVICE
+
 
 def _depends_on(after):
-    return [m.ActivityDependency(activity=after, dependency_conditions=["Succeeded"])] if after else []
-
-
-def run_databricks_job(settings, *, name, job_id, after=None):
-    """Return start/wait/check activities; the next step depends on name + '_check'."""
-    start = f"{name}_start"
-    wait = f"{name}_wait"
-    status = f"{name}_status"
-    interval = f"{name}_poll_interval"
-    # Separate jobs in one pipeline run, with stable retry tokens below 64 characters.
-    token_suffix = sha256(name.encode()).hexdigest()[:16]
+    if after is None:
+        return []
+    dependencies = after if isinstance(after, (list, tuple)) else [after]
     return [
-        m.WebActivity(
-            name=start,
-            depends_on=_depends_on(after),
-            method="POST",
-            url=settings.databricks_host + "/api/2.2/jobs/run-now",
-            headers={
-                "Authorization": "Bearer " + settings.databricks_token,
-                "Content-Type": "application/json",
-            },
-            body={"job_id": int(job_id), "idempotency_token": "@{pipeline().RunId}-" + token_suffix},
-            policy=m.ActivityPolicy(
-                secure_input=True,
-                retry=settings.adf_api_retries,
-                retry_interval_in_seconds=settings.adf_api_retry_interval_seconds,
-            ),
-        ),
-        m.UntilActivity(
-            name=wait,
-            depends_on=_depends_on(start),
-            timeout="01:00:00",
-            expression=m.Expression(
-                type="Expression",
-                value="@contains(createArray('TERMINATED', 'SKIPPED', 'INTERNAL_ERROR'), "
-                f"activity('{status}').output.state.life_cycle_state)",
-            ),
-            activities=[
-                m.WaitActivity(name=interval, wait_time_in_seconds=30),
-                m.WebActivity(
-                    name=status,
-                    method="GET",
-                    depends_on=_depends_on(interval),
-                    url=m.Expression(
-                        type="Expression",
-                        value=f"@concat('{settings.databricks_host}/api/2.2/jobs/runs/get?run_id=', "
-                        f"string(activity('{start}').output.run_id))",
-                    ),
-                    headers={"Authorization": "Bearer " + settings.databricks_token},
-                    policy=m.ActivityPolicy(
-                        secure_input=True,
-                        retry=settings.adf_api_retries,
-                        retry_interval_in_seconds=settings.adf_api_retry_interval_seconds,
-                    ),
-                ),
-            ],
-        ),
-        m.IfConditionActivity(
-            name=f"{name}_check",
-            depends_on=_depends_on(wait),
-            expression=m.Expression(
-                type="Expression",
-                value=f"@equals(activity('{status}').output.state.result_state, 'SUCCESS')",
-            ),
-            if_false_activities=[
-                m.FailActivity(
-                    name=f"{name}_failed",
-                    message="Databricks job did not succeed. Inspect its run in the workspace.",
-                    error_code="DatabricksJobFailed",
-                )
-            ],
-        ),
+        m.ActivityDependency(
+            activity=dependency if isinstance(dependency, str) else dependency.name,
+            dependency_conditions=["Succeeded"],
+        )
+        for dependency in dependencies
     ]
+
+
+class NotebookJobActivity(m.DatabricksJobActivity):
+    """Native activity with a local-only notebook path, resolved before ADF deployment."""
+
+    def __init__(self, *, notebook_path, **kwargs):
+        super().__init__(job_id=None, **kwargs)
+        self.notebook_path = notebook_path
+
+
+def run_databricks_job(settings, *, name, notebook_path, parameters=None, after=None):
+    """Declare a notebook run; deployment handles the serverless job and its ID."""
+    path = PurePosixPath(notebook_path)
+    if (
+        not notebook_path
+        or path.is_absolute()
+        or path.as_posix() != notebook_path
+        or ".." in path.parts
+        or path.suffix == ".py"
+    ):
+        raise ValueError("notebook_path must be relative to src/notebooks, without .py")
+    source = settings.notebook_source_dir / (notebook_path + ".py")
+    if not source.is_file() or not source.read_text().startswith("# Databricks notebook source"):
+        raise ValueError(f"Notebook does not exist: {notebook_path}")
+    return NotebookJobActivity(
+        name=name,
+        notebook_path=settings.notebook_workspace_path(notebook_path),
+        job_parameters=parameters or {},
+        linked_service_name=m.LinkedServiceReference(type="LinkedServiceReference", reference_name=DATABRICKS_SERVICE),
+        depends_on=_depends_on(after),
+        policy=m.ActivityPolicy(timeout="01:00:00", retry=0),
+    )
 
 
 def copy_file(*, name, source, destination, after=None):
@@ -93,11 +64,12 @@ def copy_file(*, name, source, destination, after=None):
     )
 
 
-def execute_pipeline(*, name, pipeline, after=None):
+def execute_pipeline(*, name, pipeline, after=None, parameters=None):
     """Run a registered child pipeline and wait for it to finish."""
     return m.ExecutePipelineActivity(
         name=name,
         depends_on=_depends_on(after),
         pipeline=m.PipelineReference(type="PipelineReference", reference_name=pipeline),
         wait_on_completion=True,
+        parameters=parameters or {},
     )
