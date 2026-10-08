@@ -41,6 +41,21 @@ resource "azurerm_data_factory" "demo" {
   resource_group_name = azurerm_resource_group.demo.name
   location            = var.location
 }
+resource "azurerm_databricks_access_connector" "demo" {
+  name                = "ac-${var.storage_account}"
+  resource_group_name = azurerm_resource_group.demo.name
+  location            = var.location
+  identity { type = "SystemAssigned" }
+}
+resource "azurerm_role_assignment" "databricks_storage" {
+  scope                = azurerm_storage_account.demo.id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = azurerm_databricks_access_connector.demo.identity[0].principal_id
+}
+output "databricks_access_connector_id" {
+  value      = azurerm_databricks_access_connector.demo.id
+  depends_on = [azurerm_role_assignment.databricks_storage]
+}
 output "storage_account" { value = azurerm_storage_account.demo.name }
 output "storage_account_key" {
   value     = azurerm_storage_account.demo.primary_access_key

@@ -1,167 +1,144 @@
-"""Check the upload contract without starting Spark or contacting Azure."""
+"""Provisioning contracts without Spark or live cloud calls."""
 
-import ast
 from dataclasses import replace
 from unittest.mock import Mock
 
 import pytest
+from databricks.sdk.errors import NotFound
+from databricks.sdk.service import catalog
+
+from provisioner import databricks
+from provisioner.config import Settings
 
 
-def test_deploys_multiple_declared_jobs_and_task_dependencies(tmp_path):
-    from databricks.sdk.service.jobs import BaseJob, JobSettings
+def test_serverless_jobs_are_created_once_and_reused_by_notebook_path(tmp_path):
+    from databricks.sdk.service import jobs
 
-    from adf.jobs import serverless_job
-    from provisioner.config import load_settings
-    from provisioner.databricks import deploy_serverless_jobs
-
-    settings = load_settings(tmp_path / ".env")
-    sales = serverless_job("course-sales-etl", ("sales_demo",))
-    who = serverless_job("course-who-etl", ("who/01_staging", "who/02_dim_country_year"))
+    settings = Settings(root=tmp_path)
+    path = settings.notebook_workspace_path("who/01_staging")
     client = Mock()
-    client.jobs.list.side_effect = [
-        [BaseJob(job_id=111, settings=JobSettings(name="course-sales-etl"))],
-        [],
+    client.jobs.list.return_value = []
+    client.jobs.create.return_value = jobs.CreateResponse(job_id=123)
+    assert databricks.deploy_notebook_jobs(settings, [path, path], client) == {path: "123"}
+    client.jobs.create.assert_called_once()
+    created = client.jobs.create.call_args.kwargs
+    assert created["tasks"][0].notebook_task.notebook_path == path
+    assert created["tasks"][0].new_cluster is None
+    assert created["tasks"][0].existing_cluster_id is None
+    client.jobs.list.return_value = [jobs.BaseJob(job_id=123, settings=jobs.JobSettings(**created))]
+    client.jobs.create.reset_mock()
+    assert databricks.deploy_notebook_jobs(settings, [path], client) == {path: "123"}
+    client.jobs.create.assert_not_called()
+    client.jobs.reset.assert_called_once()
+
+
+def test_job_provisioning_refuses_to_overwrite_an_unowned_job(tmp_path):
+    from databricks.sdk.service import jobs
+
+    settings = Settings(root=tmp_path)
+    client = Mock()
+    client.jobs.list.side_effect = lambda name: [jobs.BaseJob(job_id=123, settings=jobs.JobSettings(name=name))]
+    with pytest.raises(ValueError, match="not managed by this deployment"):
+        databricks.deploy_notebook_jobs(settings, [settings.notebook_workspace_path("sales/01_sales_demo")], client)
+    client.jobs.reset.assert_not_called()
+
+
+def test_job_provisioning_refuses_ambiguous_remote_jobs(tmp_path):
+    from databricks.sdk.service import jobs
+
+    client = Mock()
+    client.jobs.list.side_effect = lambda name: [
+        jobs.BaseJob(job_id=number, settings=jobs.JobSettings(name=name)) for number in (1, 2)
     ]
-    client.jobs.create.return_value = Mock(job_id=222)
-
-    assert deploy_serverless_jobs(settings, (sales, who), client) == {
-        "course-sales-etl": "111",
-        "course-who-etl": "222",
-    }
-
-    sales_settings = client.jobs.reset.call_args.kwargs["new_settings"].as_dict()
-    who_settings = JobSettings(**client.jobs.create.call_args.kwargs).as_dict()
-    assert sales_settings["tasks"][0]["notebook_task"]["notebook_path"] == settings.notebook_path + "/sales_demo"
-    assert who_settings["tasks"][0]["task_key"] == "01_staging"
-    assert who_settings["tasks"][1]["depends_on"] == [{"task_key": "01_staging"}]
-    assert who_settings["tasks"][1]["notebook_task"]["notebook_path"] == (
-        settings.notebook_path + "/who/02_dim_country_year"
-    )
-    assert all(task.get("new_cluster") is None for task in who_settings["tasks"])
+    with pytest.raises(ValueError, match="Multiple Databricks jobs"):
+        databricks.deploy_notebook_jobs(Settings(root=tmp_path), ["/Shared/test/notebook"], client)
+    client.jobs.create.assert_not_called()
+    client.jobs.reset.assert_not_called()
 
 
-@pytest.mark.parametrize("existing_job", [False, True])
-def test_job_deployment_applies_bounded_task_retries(tmp_path, existing_job):
-    from databricks.sdk.service.jobs import BaseJob, JobSettings
-
-    from adf.jobs import serverless_job
-    from provisioner.config import load_settings
-    from provisioner.databricks import deploy_serverless_jobs
-
-    settings = load_settings(tmp_path / ".env")
-    declaration = serverless_job("course-sales-etl", ("sales_demo",))
+def test_uploads_all_sources_without_jobs_or_staging_files(tmp_path, monkeypatch):
+    settings = Settings(root=tmp_path, storage_account="courseaccount")
+    source = settings.notebook_source_dir
+    (source / "who").mkdir(parents=True)
+    notebook_source = '# Databricks notebook source\ntarget_table = "workspace.dm_who.stg_suicide"\n'
+    (source / "who/staging.py").write_text(notebook_source)
+    (source / "utils.py").write_text("VALUE = 1\n")
     client = Mock()
-    client.jobs.list.return_value = (
-        [BaseJob(job_id=952924853382826, settings=JobSettings(name=declaration.name))] if existing_job else []
-    )
-    client.jobs.create.return_value = Mock(job_id=952924853382826)
-
-    assert deploy_serverless_jobs(settings, (declaration,), client) == {"course-sales-etl": "952924853382826"}
-    if existing_job:
-        client.jobs.create.assert_not_called()
-        job = client.jobs.reset.call_args.kwargs["new_settings"].as_dict()
-        assert client.jobs.reset.call_args.kwargs["job_id"] == 952924853382826
-    else:
-        client.jobs.reset.assert_not_called()
-        job = JobSettings(**client.jobs.create.call_args.kwargs).as_dict()
-    task = job["tasks"][0]
-    assert task["max_retries"] == 2
-    assert task["min_retry_interval_millis"] == 60_000
-    assert task["retry_on_timeout"] is True
-    assert task["timeout_seconds"] == 900
-    assert job["timeout_seconds"] == 3300
-
-
-def test_upload_stages_source_in_volume_without_notebook_credentials(tmp_path, monkeypatch):
-    from databricks.sdk.service import jobs as job_models
-
-    from adf.jobs import serverless_job
-    from provisioner import databricks
-    from provisioner.config import load_settings
-
-    settings = replace(
-        load_settings(tmp_path / ".env"),
-        client_secret="private-secret",
-        databricks_host="https://adb.example",
-        databricks_token="token",
-        storage_account="demostorage",
-    )
-    client = Mock()
-    monkeypatch.setattr(databricks, "download_fixture", lambda *args: b"sale_id\n1\n")
     monkeypatch.setattr(databricks, "workspace_client", lambda *args: client)
-    client.jobs.list.return_value = []
-    client.jobs.create.return_value = Mock(job_id=123)
-    resources = {"storage_account_key": "private-storage-key"}
-    pipeline = type(
-        "Pipeline", (), {"NAME": "sales", "DATABRICKS_JOBS": (serverless_job("course-sales-etl", ("sales_demo",)),)}
-    )
-    assert databricks.deploy_notebooks(settings, resources, (pipeline,)) == {"course-sales-etl": "123"}
-    client.secrets.put_secret.assert_not_called()
-    assert client.files.upload.call_args.args[0] == settings.volume_path + "/raw/sales.csv"
-    assert client.files.upload.call_args.args[1].getvalue() == b"sale_id\n1\n"
+    databricks.deploy_notebooks(settings)
     uploads = {call.kwargs["path"]: call.kwargs for call in client.workspace.upload.call_args_list}
-    upload = uploads[settings.notebook_path + "/sales_demo"]
-    source = upload["content"].decode()
-    defaults = next(
-        node
-        for node in ast.parse(source).body
-        if isinstance(node, ast.Assign)
-        and any(isinstance(target, ast.Name) and target.id == "DEFAULT_PARAMETERS" for target in node.targets)
-    )
-    values = ast.literal_eval(defaults.value)
-    assert values["raw_path"] == settings.volume_path + "/raw/sales.csv"
-    assert values["table_prefix"] == "workspace.default.analytics_demo_sales"
-    assert values["report_path"].startswith(settings.volume_path + "/reports/")
-    assert "tenant_id" not in values and "client_id" not in values
-    assert "private-secret" not in source
-    assert "private-storage-key" not in source
-    assert "setup_parameters(spark, dbutils, DEFAULT_PARAMETERS)" in source
-    assert upload["path"] == settings.notebook_path + "/sales_demo"
-    uploads = {call.kwargs["path"]: call.kwargs for call in client.workspace.upload.call_args_list}
-    utility_path = settings.notebook_path + "/utils.py"
-    utility = uploads[utility_path]
-    assert utility["format"].value == "AUTO"
-    assert not utility["content"].startswith(b"# Databricks notebook source")
-    assert "from utils import" in source
-    assert "private-secret" not in utility["content"].decode()
-    job = client.jobs.create.call_args.kwargs
-    assert job["name"] == "course-sales-etl"
-    assert job["performance_target"] == job_models.PerformanceTarget.STANDARD
-    task = job["tasks"][0]
-    assert isinstance(task, job_models.Task)
-    assert task.new_cluster is None and task.job_cluster_key is None
-    assert task.existing_cluster_id is None
-    assert task.notebook_task.notebook_path == settings.notebook_path + "/sales_demo"
-
-
-def test_deploy_discovers_new_notebooks_and_utilities(tmp_path, monkeypatch):
-    from adf.jobs import serverless_job
-    from provisioner import databricks
-    from provisioner.config import load_settings
-
-    settings = replace(
-        load_settings(tmp_path / ".env"), root=tmp_path, databricks_host="https://adb.example", databricks_token="token"
-    )
-    source = tmp_path / "databricks-etl-pipeline/src/notebooks"
-    (source / "extra").mkdir(parents=True)
-    (source / "first.py").write_text("# Databricks notebook source\nprint(1)\n")
-    (source / "extra/second.py").write_text("# Databricks notebook source\nprint(2)\n")
-    (source / "utils.py").write_text("VALUE = 10\n")
-    client = Mock()
-    monkeypatch.setattr(databricks, "download_fixture", lambda *args: b"sale_id\n1\n")
-    monkeypatch.setattr(databricks, "workspace_client", lambda *args: client)
-    client.jobs.list.return_value = []
-    client.jobs.create.return_value = Mock(job_id=456)
-    pipeline = type("Pipeline", (), {"NAME": "first", "DATABRICKS_JOBS": (serverless_job("first", ("first",)),)})
-    assert databricks.deploy_notebooks(settings, {"storage_account_key": "test-key"}, (pipeline,)) == {"first": "456"}
-    uploads = {call.kwargs["path"]: call.kwargs for call in client.workspace.upload.call_args_list}
-    assert set(uploads) == {
-        settings.notebook_path + "/first",
-        settings.notebook_path + "/extra/second",
-        settings.notebook_path + "/utils.py",
-    }
-    assert uploads[settings.notebook_path + "/first"]["format"].value == "SOURCE"
+    assert set(uploads) == {settings.notebook_path + "/who/staging", settings.notebook_path + "/utils.py"}
+    notebook = uploads[settings.notebook_path + "/who/staging"]
+    assert notebook["content"].decode() == notebook_source
+    assert notebook["format"].value == "SOURCE"
     assert uploads[settings.notebook_path + "/utils.py"]["format"].value == "AUTO"
+    assert client.jobs.mock_calls == []
+    assert client.files.mock_calls == []
+    assert client.volumes.mock_calls == []
+
+
+def test_storage_setup_creates_identity_locations_and_schemas(tmp_path):
+    settings = Settings(root=tmp_path, storage_account="courseaccount")
+    client = Mock()
+    for api in (client.storage_credentials, client.external_locations, client.schemas):
+        api.get.side_effect = NotFound("missing")
+    databricks.configure_storage(settings, {"databricks_access_connector_id": "/connector"}, client)
+    credential = client.storage_credentials.create.call_args.kwargs
+    assert credential["azure_managed_identity"].access_connector_id == "/connector"
+    assert [c.kwargs["url"] for c in client.external_locations.create.call_args_list] == [
+        settings.storage_url(name) for name in ("raw", "lakehouse", "reports")
+    ]
+    assert [c.kwargs["name"] for c in client.schemas.create.call_args_list] == ["dm_sales", "dm_who"]
+
+
+def test_storage_setup_preserves_matching_existing_objects(tmp_path):
+    settings = Settings(root=tmp_path, storage_account="courseaccount")
+    client = Mock()
+    client.storage_credentials.get.return_value = catalog.StorageCredentialInfo(
+        azure_managed_identity=catalog.AzureManagedIdentityResponse(access_connector_id="/connector")
+    )
+    client.external_locations.get.side_effect = [
+        catalog.ExternalLocationInfo(
+            url=settings.storage_url(name) + "/", credential_name=settings.storage_credential_name
+        )
+        for name in ("raw", "lakehouse", "reports")
+    ]
+    databricks.configure_storage(settings, {"databricks_access_connector_id": "/connector"}, client)
+    client.storage_credentials.create.assert_not_called()
+    client.external_locations.create.assert_not_called()
+    client.schemas.create.assert_not_called()
+
+
+def test_storage_setup_refuses_conflicting_identity(tmp_path):
+    settings = Settings(root=tmp_path, storage_account="courseaccount")
+    client = Mock()
+    client.storage_credentials.get.return_value = catalog.StorageCredentialInfo(
+        azure_managed_identity=catalog.AzureManagedIdentityResponse(access_connector_id="/someone-else")
+    )
+    with pytest.raises(ValueError, match="different Access Connector"):
+        databricks.configure_storage(settings, {"databricks_access_connector_id": "/connector"}, client)
+    client.storage_credentials.update.assert_not_called()
+    client.external_locations.create.assert_not_called()
+
+
+def test_storage_setup_requires_terraform_connector_output(tmp_path):
+    with pytest.raises(ValueError, match="Access Connector output is missing"):
+        databricks.configure_storage(Settings(root=tmp_path), {}, Mock())
+
+
+def test_storage_setup_refuses_conflicting_external_location(tmp_path):
+    settings = Settings(root=tmp_path, storage_account="courseaccount")
+    client = Mock()
+    client.storage_credentials.get.return_value = catalog.StorageCredentialInfo(
+        azure_managed_identity=catalog.AzureManagedIdentityResponse(access_connector_id="/connector")
+    )
+    client.external_locations.get.return_value = catalog.ExternalLocationInfo(
+        url="abfss://raw@anotheraccount.dfs.core.windows.net", credential_name=settings.storage_credential_name
+    )
+    with pytest.raises(ValueError, match="already points to different storage"):
+        databricks.configure_storage(settings, {"databricks_access_connector_id": "/connector"}, client)
+    client.external_locations.update.assert_not_called()
+    client.schemas.create.assert_not_called()
 
 
 def test_workspace_client_uses_token(tmp_path, monkeypatch):
@@ -169,9 +146,13 @@ def test_workspace_client_uses_token(tmp_path, monkeypatch):
     from provisioner.config import load_settings
 
     settings = replace(
-        load_settings(tmp_path / ".env"), databricks_host="https://adb.example", databricks_token="private-token"
+        load_settings(tmp_path / ".env"),
+        databricks_host="https://adb-123.1.azuredatabricks.net",
+        databricks_token="private-token",
     )
     constructor = Mock()
     monkeypatch.setattr(databricks, "WorkspaceClient", constructor)
     databricks.workspace_client(settings)
-    constructor.assert_called_once_with(host="https://adb.example", token="private-token", auth_type="pat")
+    constructor.assert_called_once_with(
+        host="https://adb-123.1.azuredatabricks.net", token="private-token", auth_type="pat"
+    )
