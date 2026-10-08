@@ -39,7 +39,7 @@ def test_job_provisioning_refuses_to_overwrite_an_unowned_job(tmp_path):
     client = Mock()
     client.jobs.list.side_effect = lambda name: [jobs.BaseJob(job_id=123, settings=jobs.JobSettings(name=name))]
     with pytest.raises(ValueError, match="not managed by this deployment"):
-        databricks.deploy_notebook_jobs(settings, [settings.notebook_workspace_path("sales_demo")], client)
+        databricks.deploy_notebook_jobs(settings, [settings.notebook_workspace_path("sales/01_sales_demo")], client)
     client.jobs.reset.assert_not_called()
 
 

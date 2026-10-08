@@ -11,7 +11,7 @@ def build_pipeline(settings) -> m.PipelineResource:
     sales = run_databricks_job(
         settings,
         name="sales",
-        notebook_path="sales_demo",
+        notebook_path="sales/01_sales_demo",
     )
     return m.PipelineResource(
         description="Run the sales serverless job; notebooks write directly to Azure Storage.",
