@@ -1,6 +1,6 @@
 # WHO suicide rates demo
 
-**Azure CSV → four PySpark notebooks → star schema in `workspace.dm_who` → Power BI.**
+**Azure CSV → four PySpark notebooks → star schema in `bnstprod.dm_who` → Power BI.**
 
 Source: [Kaggle dataset](https://www.kaggle.com/datasets/samartalwar/global-suicide-rates-and-socioeconomic-indicators). The repository CSV contains 18,315 rows across 185 countries, 2000–2021.
 
@@ -24,7 +24,7 @@ The existing Blob URL and this `abfss` URL address the same file when the accoun
 
 Files are in **`databricks-etl-pipeline/src/notebooks/who/`**. Each code block below is a separate Databricks code cell; the headings are Markdown cells.
 
-Paths and tables are hard-coded for `bdastorageaccountmaster` and `workspace.dm_who`. Edit the values directly when using another account or catalog. Deployment uploads the files unchanged.
+Paths and tables are hard-coded for `bdastorageaccountmaster` and `bnstprod.dm_who`. Edit the values directly when using another account or catalog. Deployment uploads the files unchanged.
 
 | Notebook | Output table | Grain |
 |---|---|---|
@@ -39,7 +39,7 @@ Paths and tables are hard-coded for `bdastorageaccountmaster` and `workspace.dm_
 Edit these values directly if your account or table changes.
 
 ```python
-target_table = "workspace.dm_who.stg_suicide"
+target_table = "bnstprod.dm_who.stg_suicide"
 target_path = "abfss://lakehouse@bdastorageaccountmaster.dfs.core.windows.net/dm_who/stg_suicide"
 source_path = "abfss://raw@bdastorageaccountmaster.dfs.core.windows.net/who/global_suicide_rates_real_who_worldbank.csv"
 ```
@@ -91,7 +91,7 @@ print(f"Optimized: {target_table} at {target_path}")
 Edit these values directly if your account or table changes.
 
 ```python
-target_table = "workspace.dm_who.dim_country_year"
+target_table = "bnstprod.dm_who.dim_country_year"
 target_path = "abfss://lakehouse@bdastorageaccountmaster.dfs.core.windows.net/dm_who/dim_country_year"
 ```
 
@@ -103,7 +103,7 @@ df = spark.sql("""
         CONCAT(country_code, '_', CAST(year AS STRING)) AS country_year_key,
         country_code, country_name, year,
         gdp_usd, gdp_per_capita_usd, total_country_population
-    FROM workspace.dm_who.stg_suicide
+    FROM bnstprod.dm_who.stg_suicide
 """)
 ```
 
@@ -128,7 +128,7 @@ print(f"Optimized: {target_table} at {target_path}")
 Edit these values directly if your account or table changes.
 
 ```python
-target_table = "workspace.dm_who.dim_demographic"
+target_table = "bnstprod.dm_who.dim_demographic"
 target_path = "abfss://lakehouse@bdastorageaccountmaster.dfs.core.windows.net/dm_who/dim_demographic"
 ```
 
@@ -141,7 +141,7 @@ df = spark.sql("""
             'sex', sex, 'age_bracket', age_bracket, 'generation', generation
         )), 256) AS demographic_key,
         sex, age_bracket, generation
-    FROM workspace.dm_who.stg_suicide
+    FROM bnstprod.dm_who.stg_suicide
 """)
 ```
 
@@ -166,7 +166,7 @@ print(f"Optimized: {target_table} at {target_path}")
 Edit these values directly if your account or table changes.
 
 ```python
-target_table = "workspace.dm_who.fact_suicide_rate"
+target_table = "bnstprod.dm_who.fact_suicide_rate"
 target_path = "abfss://lakehouse@bdastorageaccountmaster.dfs.core.windows.net/dm_who/fact_suicide_rate"
 ```
 
@@ -175,10 +175,10 @@ target_path = "abfss://lakehouse@bdastorageaccountmaster.dfs.core.windows.net/dm
 ```python
 df = spark.sql("""
     SELECT c.country_year_key, d.demographic_key, s.suicide_rate_per_100k
-    FROM workspace.dm_who.stg_suicide s
-    JOIN workspace.dm_who.dim_country_year c
+    FROM bnstprod.dm_who.stg_suicide s
+    JOIN bnstprod.dm_who.dim_country_year c
       ON s.country_code = c.country_code AND s.year = c.year
-    JOIN workspace.dm_who.dim_demographic d
+    JOIN bnstprod.dm_who.dim_demographic d
       ON s.sex = d.sex AND s.age_bracket = d.age_bracket AND s.generation = d.generation
 """)
 ```
@@ -198,47 +198,20 @@ spark.sql(f"OPTIMIZE {target_table}")
 print(f"Optimized: {target_table} at {target_path}")
 ```
 
-## 3. Simple ADF pipeline
+## 3. Run the WHO notebooks with ADF Studio
 
-The included `azure-data-factory-pipeline/src/adf/defs/pl_who_pipeline.py` is the complete definition:
+The root [README](README.md) has the end-to-end ADF Studio steps and screenshots. Create a Databricks linked service that uses an all-purpose cluster, then add four Databricks Notebook activities with these workspace paths:
 
-```python
-"""Four notebooks, one table each; ADF controls the execution order."""
+| Activity | Notebook path |
+|---|---|
+| `stg_suicide` | `/Shared/analytics-demo/who/01_staging` |
+| `dim_country_year` | `/Shared/analytics-demo/who/02_dim_country_year` |
+| `dim_demographic` | `/Shared/analytics-demo/who/03_dim_demographic` |
+| `fact_suicide_rate` | `/Shared/analytics-demo/who/04_fact_suicide_rate` |
 
-from azure.mgmt.datafactory import models as m
+Connect staging to both dimension activities, then connect both dimensions to the fact activity. Validate and debug the pipeline, publish it after a successful run, and check **Monitor** for activity results.
 
-from adf.activities import run_databricks_job
-
-NAME = "pl_who_pipeline"
-
-
-def build_pipeline(settings):
-    staging = run_databricks_job(settings, name="staging", notebook_path="who/01_staging")
-    country = run_databricks_job(settings, name="country", notebook_path="who/02_dim_country_year", after=staging)
-    demographic = run_databricks_job(
-        settings, name="demographic", notebook_path="who/03_dim_demographic", after=staging
-    )
-    fact = run_databricks_job(
-        settings, name="fact", notebook_path="who/04_fact_suicide_rate", after=[country, demographic]
-    )
-
-    return m.PipelineResource(concurrency=1, activities=[staging, country, demographic, fact])
-```
-
-Notebook paths are all you provide. Deployment creates/reuses serverless jobs and supplies IDs to native ADF Job activities. Both dimensions use `after=staging`, so they can run together after staging succeeds. The fact uses `after=[country, demographic]`, so it waits for both dimensions. No Web activities or manual job IDs.
-
-## 4. Deploy and run
-
-```bash
-uv run solution deploy --with-pipelines
-uv run solution run-adf pl_who_pipeline
-```
-
-Check **ADF Monitor → activity output → Databricks run** for notebook/Spark details. Notebook paths and table names are explicit literals in the code; there are no widgets or runtime parameters.
-
-Python pipeline files are optional. To use ADF Studio instead, run plain `solution deploy`, add a **Databricks Job** activity, select `ls_azure_databricks_serverless`, then create/select a job with the four notebook tasks in order. Publish and trigger manually or add a schedule.
-
-## 5. Power BI report examples — reference only
+## 4. Power BI report examples — reference only
 
 Load the three final tables into Power BI using the Databricks connector and your workspace SQL warehouse connection details. Do not load `stg_suicide` into the report model.
 
