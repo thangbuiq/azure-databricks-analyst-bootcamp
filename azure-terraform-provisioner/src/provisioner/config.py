@@ -37,7 +37,6 @@ class Settings:
     notebook_path: str = "/Shared/analytics-demo"
     databricks_catalog: str = "workspace"
     databricks_schema: str = "dm_sales"
-    table_prefix: str = "analytics_demo_sales"
 
     @property
     def storage_credential_name(self):
@@ -125,15 +124,3 @@ def load_settings(env_file: Path | None = None) -> Settings:
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", s.databricks_catalog):
         raise ValueError("DATABRICKS_CATALOG must contain only letters, digits and underscores")
     return s
-
-
-def notebook_parameters(settings):
-    return {
-        "raw_path": f"{settings.storage_url('raw')}/sales/sales.csv",
-        "table_prefix": f"{settings.databricks_catalog}.{settings.databricks_schema}.{settings.table_prefix}",
-        "lakehouse_path": settings.storage_url("lakehouse") + "/dm_sales",
-        "report_path": settings.storage_url("reports") + "/sales",
-        "catalog": settings.databricks_catalog,
-        "who_raw_path": settings.storage_url("raw") + "/who/global_suicide_rates_real_who_worldbank.csv",
-        "who_lakehouse_path": settings.storage_url("lakehouse") + "/dm_who",
-    }

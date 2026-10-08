@@ -1,29 +1,53 @@
 # Databricks notebook source
 # ruff: noqa: F821
-DEFAULT_PARAMETERS = {}
-dbutils.widgets.text("catalog", DEFAULT_PARAMETERS.get("catalog", "workspace"))
-dbutils.widgets.text("who_lakehouse_path", DEFAULT_PARAMETERS.get("who_lakehouse_path", ""))
-catalog = dbutils.widgets.get("catalog")
-lakehouse_path = dbutils.widgets.get("who_lakehouse_path")
-assert lakehouse_path.startswith("abfss://"), "Set who_lakehouse_path to the Azure lakehouse/dm_who path"
+# MAGIC %md
+# MAGIC # WHO — dim_demographic
+# MAGIC Read Azure data and write one Delta table.
 
 # COMMAND ----------
-df = spark.sql(f"""
+
+# MAGIC %md
+# MAGIC ## 1. Locations
+# MAGIC Edit these values directly if your account or table changes.
+
+# COMMAND ----------
+
+target_table = "workspace.dm_who.dim_demographic"
+target_path = "abfss://lakehouse@bdastorageaccountmaster.dfs.core.windows.net/dm_who/dim_demographic"
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 2. Transform
+
+# COMMAND ----------
+
+df = spark.sql("""
     SELECT DISTINCT
         SHA2(TO_JSON(NAMED_STRUCT(
             'sex', sex, 'age_bracket', age_bracket, 'generation', generation
         )), 256) AS demographic_key,
         sex, age_bracket, generation
-    FROM {catalog}.dm_who.stg_suicide
+    FROM workspace.dm_who.stg_suicide
 """)
 
-assert df.count() == 36
-assert df.select("demographic_key").distinct().count() == 36
+# COMMAND ----------
 
-(
-    df.write.format("delta")
-    .mode("overwrite")
-    .option("path", lakehouse_path + "/dim_demographic")
-    .saveAsTable(f"{catalog}.dm_who.dim_demographic")
-)
-display(df)
+# MAGIC %md
+# MAGIC ## 3. Write the Delta table
+
+# COMMAND ----------
+
+print(f"Writing {target_table} to {target_path}")
+(df.write.format("delta").mode("overwrite").option("path", target_path).saveAsTable(target_table))
+print(f"Written: {target_table}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 4. Optimize the Delta files
+
+# COMMAND ----------
+
+spark.sql(f"OPTIMIZE {target_table}")
+print(f"Optimized: {target_table} at {target_path}")

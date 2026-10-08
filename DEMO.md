@@ -20,41 +20,40 @@ abfss://raw@<STORAGE_ACCOUNT>.dfs.core.windows.net/who/global_suicide_rates_real
 
 The existing Blob URL and this `abfss` URL address the same file when the account matches. No upload to Databricks is needed. Delta data is written to `lakehouse/dm_who/<table>` in that storage account.
 
-## 2. Create four notebooks
+## 2. Four notebooks
 
-These files are included in **`databricks-etl-pipeline/src/notebooks/who/`**. Each writes exactly one table. Deployment fills the non-secret widget defaults. `workspace` below means your configured `DATABRICKS_CATALOG`.
+Files are in **`databricks-etl-pipeline/src/notebooks/who/`**. Each code block below is a separate Databricks code cell; the headings are Markdown cells.
 
-| File | Table in `workspace.dm_who` | Grain | Rows |
-|---|---|---|---:|
-| `01_staging.py` | `stg_suicide` | Source observation, cleaned and typed | 18,315 |
-| `02_dim_country_year.py` | `dim_country_year` | Country + year, including GDP/population | 4,070 |
-| `03_dim_demographic.py` | `dim_demographic` | Sex + age bracket + generation | 36 |
-| `04_fact_suicide_rate.py` | `fact_suicide_rate` | Country-year + demographic | 18,315 |
+Paths and tables are hard-coded for `bdastorageaccountmaster` and `workspace.dm_who`. Edit the values directly when using another account or catalog. Deployment uploads the files unchanged.
 
-```text
-dim_country_year ── country_year_key ── fact_suicide_rate ── demographic_key ── dim_demographic
-```
+| Notebook | Output table | Grain |
+|---|---|---|
+| `01_staging.py` | `stg_suicide` | Cleaned source observation |
+| `02_dim_country_year.py` | `dim_country_year` | Country + year |
+| `03_dim_demographic.py` | `dim_demographic` | Sex + age bracket + generation |
+| `04_fact_suicide_rate.py` | `fact_suicide_rate` | Country-year + demographic |
 
 ### `01_staging.py`
 
+#### 1. Locations
+Edit these values directly if your account or table changes.
+
 ```python
-# Databricks notebook source
-# ruff: noqa: F821
-DEFAULT_PARAMETERS = {}
-dbutils.widgets.text("catalog", DEFAULT_PARAMETERS.get("catalog", "workspace"))
-dbutils.widgets.text("who_lakehouse_path", DEFAULT_PARAMETERS.get("who_lakehouse_path", ""))
-catalog = dbutils.widgets.get("catalog")
-lakehouse_path = dbutils.widgets.get("who_lakehouse_path")
-assert lakehouse_path.startswith("abfss://"), "Set who_lakehouse_path to the Azure lakehouse/dm_who path"
-dbutils.widgets.text("who_raw_path", DEFAULT_PARAMETERS.get("who_raw_path", ""))
-raw_path = dbutils.widgets.get("who_raw_path")
-assert raw_path.startswith("abfss://"), "Set who_raw_path to the Azure CSV path"
+target_table = "workspace.dm_who.stg_suicide"
+target_path = "abfss://lakehouse@bdastorageaccountmaster.dfs.core.windows.net/dm_who/stg_suicide"
+source_path = "abfss://raw@bdastorageaccountmaster.dfs.core.windows.net/who/global_suicide_rates_real_who_worldbank.csv"
+```
 
-# COMMAND ----------
-raw = spark.read.option("header", True).option("inferSchema", False).option("mode", "FAILFAST").csv(raw_path)
+#### 2. Read the CSV
+
+```python
+raw = spark.read.option("header", True).option("mode", "FAILFAST").csv(source_path)
 raw.createOrReplaceTempView("raw_who")
+```
 
-# COMMAND ----------
+#### 3. Transform
+
+```python
 df = spark.sql("""
     SELECT
         TRIM(country) AS country_name,
@@ -69,123 +68,134 @@ df = spark.sql("""
         CAST(CAST(total_country_population AS DOUBLE) AS BIGINT) AS total_country_population
     FROM raw_who
 """)
+```
 
-assert df.count() == 18315
-assert df.select("country_code", "year", "sex", "age_bracket", "generation").distinct().count() == 18315
-assert df.filter("country_code IS NULL OR year IS NULL OR suicide_rate_per_100k IS NULL").count() == 0
-assert df.filter("suicide_rate_per_100k < 0 OR isnan(suicide_rate_per_100k)").count() == 0
+#### 4. Write the Delta table
 
-(
-    df.write.format("delta")
-    .mode("overwrite")
-    .option("path", lakehouse_path + "/stg_suicide")
-    .saveAsTable(f"{catalog}.dm_who.stg_suicide")
-)
-display(df.limit(10))
+```python
+print(f"Writing {target_table} to {target_path}")
+(df.write.format("delta").mode("overwrite").option("path", target_path).saveAsTable(target_table))
+print(f"Written: {target_table}")
+```
+
+#### 5. Optimize the Delta files
+
+```python
+spark.sql(f"OPTIMIZE {target_table}")
+print(f"Optimized: {target_table} at {target_path}")
 ```
 
 ### `02_dim_country_year.py`
 
-GDP and population repeat across source demographics. Keep one copy per country-year.
+#### 1. Locations
+Edit these values directly if your account or table changes.
 
 ```python
-# Databricks notebook source
-# ruff: noqa: F821
-DEFAULT_PARAMETERS = {}
-dbutils.widgets.text("catalog", DEFAULT_PARAMETERS.get("catalog", "workspace"))
-dbutils.widgets.text("who_lakehouse_path", DEFAULT_PARAMETERS.get("who_lakehouse_path", ""))
-catalog = dbutils.widgets.get("catalog")
-lakehouse_path = dbutils.widgets.get("who_lakehouse_path")
-assert lakehouse_path.startswith("abfss://"), "Set who_lakehouse_path to the Azure lakehouse/dm_who path"
+target_table = "workspace.dm_who.dim_country_year"
+target_path = "abfss://lakehouse@bdastorageaccountmaster.dfs.core.windows.net/dm_who/dim_country_year"
+```
 
-# COMMAND ----------
-df = spark.sql(f"""
+#### 2. Transform
+
+```python
+df = spark.sql("""
     SELECT DISTINCT
         CONCAT(country_code, '_', CAST(year AS STRING)) AS country_year_key,
         country_code, country_name, year,
         gdp_usd, gdp_per_capita_usd, total_country_population
-    FROM {catalog}.dm_who.stg_suicide
+    FROM workspace.dm_who.stg_suicide
 """)
+```
 
-assert df.count() == 4070
-assert df.select("country_year_key").distinct().count() == 4070
-assert df.filter("gdp_usd IS NULL").count() == 50
+#### 3. Write the Delta table
 
-(
-    df.write.format("delta")
-    .mode("overwrite")
-    .option("path", lakehouse_path + "/dim_country_year")
-    .saveAsTable(f"{catalog}.dm_who.dim_country_year")
-)
-display(df.limit(10))
+```python
+print(f"Writing {target_table} to {target_path}")
+(df.write.format("delta").mode("overwrite").option("path", target_path).saveAsTable(target_table))
+print(f"Written: {target_table}")
+```
+
+#### 4. Optimize the Delta files
+
+```python
+spark.sql(f"OPTIMIZE {target_table}")
+print(f"Optimized: {target_table} at {target_path}")
 ```
 
 ### `03_dim_demographic.py`
 
-```python
-# Databricks notebook source
-# ruff: noqa: F821
-DEFAULT_PARAMETERS = {}
-dbutils.widgets.text("catalog", DEFAULT_PARAMETERS.get("catalog", "workspace"))
-dbutils.widgets.text("who_lakehouse_path", DEFAULT_PARAMETERS.get("who_lakehouse_path", ""))
-catalog = dbutils.widgets.get("catalog")
-lakehouse_path = dbutils.widgets.get("who_lakehouse_path")
-assert lakehouse_path.startswith("abfss://"), "Set who_lakehouse_path to the Azure lakehouse/dm_who path"
+#### 1. Locations
+Edit these values directly if your account or table changes.
 
-# COMMAND ----------
-df = spark.sql(f"""
+```python
+target_table = "workspace.dm_who.dim_demographic"
+target_path = "abfss://lakehouse@bdastorageaccountmaster.dfs.core.windows.net/dm_who/dim_demographic"
+```
+
+#### 2. Transform
+
+```python
+df = spark.sql("""
     SELECT DISTINCT
         SHA2(TO_JSON(NAMED_STRUCT(
             'sex', sex, 'age_bracket', age_bracket, 'generation', generation
         )), 256) AS demographic_key,
         sex, age_bracket, generation
-    FROM {catalog}.dm_who.stg_suicide
+    FROM workspace.dm_who.stg_suicide
 """)
+```
 
-assert df.count() == 36
-assert df.select("demographic_key").distinct().count() == 36
+#### 3. Write the Delta table
 
-(
-    df.write.format("delta")
-    .mode("overwrite")
-    .option("path", lakehouse_path + "/dim_demographic")
-    .saveAsTable(f"{catalog}.dm_who.dim_demographic")
-)
-display(df)
+```python
+print(f"Writing {target_table} to {target_path}")
+(df.write.format("delta").mode("overwrite").option("path", target_path).saveAsTable(target_table))
+print(f"Written: {target_table}")
+```
+
+#### 4. Optimize the Delta files
+
+```python
+spark.sql(f"OPTIMIZE {target_table}")
+print(f"Optimized: {target_table} at {target_path}")
 ```
 
 ### `04_fact_suicide_rate.py`
 
-```python
-# Databricks notebook source
-# ruff: noqa: F821
-DEFAULT_PARAMETERS = {}
-dbutils.widgets.text("catalog", DEFAULT_PARAMETERS.get("catalog", "workspace"))
-dbutils.widgets.text("who_lakehouse_path", DEFAULT_PARAMETERS.get("who_lakehouse_path", ""))
-catalog = dbutils.widgets.get("catalog")
-lakehouse_path = dbutils.widgets.get("who_lakehouse_path")
-assert lakehouse_path.startswith("abfss://"), "Set who_lakehouse_path to the Azure lakehouse/dm_who path"
+#### 1. Locations
+Edit these values directly if your account or table changes.
 
-# COMMAND ----------
-df = spark.sql(f"""
+```python
+target_table = "workspace.dm_who.fact_suicide_rate"
+target_path = "abfss://lakehouse@bdastorageaccountmaster.dfs.core.windows.net/dm_who/fact_suicide_rate"
+```
+
+#### 2. Transform
+
+```python
+df = spark.sql("""
     SELECT c.country_year_key, d.demographic_key, s.suicide_rate_per_100k
-    FROM {catalog}.dm_who.stg_suicide s
-    JOIN {catalog}.dm_who.dim_country_year c
+    FROM workspace.dm_who.stg_suicide s
+    JOIN workspace.dm_who.dim_country_year c
       ON s.country_code = c.country_code AND s.year = c.year
-    JOIN {catalog}.dm_who.dim_demographic d
+    JOIN workspace.dm_who.dim_demographic d
       ON s.sex = d.sex AND s.age_bracket = d.age_bracket AND s.generation = d.generation
 """)
+```
 
-assert df.count() == 18315
-assert df.select("country_year_key", "demographic_key").distinct().count() == 18315
+#### 3. Write the Delta table
 
-(
-    df.write.format("delta")
-    .mode("overwrite")
-    .option("path", lakehouse_path + "/fact_suicide_rate")
-    .saveAsTable(f"{catalog}.dm_who.fact_suicide_rate")
-)
-display(df.limit(10))
+```python
+print(f"Writing {target_table} to {target_path}")
+(df.write.format("delta").mode("overwrite").option("path", target_path).saveAsTable(target_table))
+print(f"Written: {target_table}")
+```
+
+#### 4. Optimize the Delta files
+
+```python
+spark.sql(f"OPTIMIZE {target_table}")
+print(f"Optimized: {target_table} at {target_path}")
 ```
 
 ## 3. Simple ADF pipeline
@@ -224,7 +234,7 @@ uv run solution deploy --with-pipelines
 uv run solution run-adf pl_who_pipeline
 ```
 
-Check **ADF Monitor → activity output → Databricks run** for notebook/Spark details. The `who_raw_path`, `who_lakehouse_path` and `catalog` widgets use defaults from `.env`; add `parameters={...}` to a helper call to override them.
+Check **ADF Monitor → activity output → Databricks run** for notebook/Spark details. Notebook paths and table names are explicit literals in the code; there are no widgets or runtime parameters.
 
 Python pipeline files are optional. To use ADF Studio instead, run plain `solution deploy`, add a **Databricks Job** activity, select `ls_azure_databricks_serverless`, then create/select a job with the four notebook tasks in order. Publish and trigger manually or add a schedule.
 

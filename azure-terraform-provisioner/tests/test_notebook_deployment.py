@@ -1,6 +1,5 @@
 """Provisioning contracts without Spark or live cloud calls."""
 
-import ast
 from dataclasses import replace
 from unittest.mock import Mock
 
@@ -61,7 +60,8 @@ def test_uploads_all_sources_without_jobs_or_staging_files(tmp_path, monkeypatch
     settings = Settings(root=tmp_path, storage_account="courseaccount")
     source = settings.notebook_source_dir
     (source / "who").mkdir(parents=True)
-    (source / "who/staging.py").write_text("# Databricks notebook source\nDEFAULT_PARAMETERS = {}\n")
+    notebook_source = '# Databricks notebook source\ntarget_table = "workspace.dm_who.stg_suicide"\n'
+    (source / "who/staging.py").write_text(notebook_source)
     (source / "utils.py").write_text("VALUE = 1\n")
     client = Mock()
     monkeypatch.setattr(databricks, "workspace_client", lambda *args: client)
@@ -69,10 +69,7 @@ def test_uploads_all_sources_without_jobs_or_staging_files(tmp_path, monkeypatch
     uploads = {call.kwargs["path"]: call.kwargs for call in client.workspace.upload.call_args_list}
     assert set(uploads) == {settings.notebook_path + "/who/staging", settings.notebook_path + "/utils.py"}
     notebook = uploads[settings.notebook_path + "/who/staging"]
-    values = ast.literal_eval(ast.parse(notebook["content"]).body[0].value)
-    assert values["raw_path"] == "abfss://raw@courseaccount.dfs.core.windows.net/sales/sales.csv"
-    assert values["who_lakehouse_path"] == "abfss://lakehouse@courseaccount.dfs.core.windows.net/dm_who"
-    assert not any("token" in name or "secret" in name for name in values)
+    assert notebook["content"].decode() == notebook_source
     assert notebook["format"].value == "SOURCE"
     assert uploads[settings.notebook_path + "/utils.py"]["format"].value == "AUTO"
     assert client.jobs.mock_calls == []

@@ -37,7 +37,7 @@ For an existing deployment, run `uv run solution provision` once to add the conn
 
 ## Run notebooks and ADF
 
-Open a deployed notebook and select **Serverless → Run All**. Widget defaults point directly at Azure Storage.
+Open a deployed notebook and select **Serverless → Run All**. The first code cell contains hard-coded paths and table names. Edit them directly if needed; deployment does not rewrite them.
 
 In **ADF Studio**:
 
@@ -85,7 +85,7 @@ uv run solution deploy --with-pipelines
 uv run solution run-adf pl_example
 ```
 
-Paths are relative to `databricks-etl-pipeline/src/notebooks/`, without `.py`. Deployment uploads notebooks, creates/reuses the serverless jobs and wires their IDs into **native ADF Job activities**. `after=staging` makes `country` wait for staging to succeed. Use `parameters={"year": "2021"}` to pass widget values.
+Paths are relative to `databricks-etl-pipeline/src/notebooks/`, without `.py`. Deployment uploads notebooks, creates/reuses the serverless jobs and wires their IDs into **native ADF Job activities**. `after=staging` makes `country` wait for staging to succeed. The teaching notebooks use hard-coded values, so no parameters are needed.
 
 The included WHO pipeline runs all four tables:
 
@@ -98,6 +98,8 @@ uv run solution run-adf pl_who_pipeline
 Python definitions remain **optional**. Normal `solution deploy` provisions linked services and notebooks without updating pipelines or jobs. You can instead build pipelines and create/select jobs in ADF Studio. `run-adf` accepts Studio-only pipelines too.
 
 `--with-pipelines` updates matching definitions and their repository-owned jobs; it can overwrite Studio edits to those objects. Removed definitions do not delete deployed objects. [More examples](azure-data-factory-pipeline/README.md).
+
+The notebooks use separate Markdown and code cells for locations, transforms, writes and `OPTIMIZE`. Each write prints its table and storage path. They contain no widgets, assertions, or repeated count/display checks. Values are hard-coded for `bdastorageaccountmaster` and the `workspace` catalog; changing `.env` does not change notebook code.
 
 ## Data locations
 

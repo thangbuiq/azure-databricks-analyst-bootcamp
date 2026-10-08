@@ -6,8 +6,6 @@ from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service import catalog, jobs, workspace
 
-from provisioner.config import notebook_parameters
-
 
 def workspace_client(settings, resources=None):
     settings.validate_databricks()
@@ -93,7 +91,7 @@ def configure_storage(settings, resources, client=None):
 
 
 def deploy_notebooks(settings, resources=None):
-    """Upload every Python notebook and utility with non-secret storage defaults."""
+    """Upload every Python notebook and utility exactly as authored."""
     client = workspace_client(settings)
     for source_file in sorted(settings.notebook_source_dir.rglob("*.py")):
         source = source_file.read_text()
@@ -101,9 +99,6 @@ def deploy_notebooks(settings, resources=None):
         relative_path = source_file.relative_to(settings.notebook_source_dir)
         if is_notebook:
             relative_path = relative_path.with_suffix("")
-            source = source.replace(
-                "DEFAULT_PARAMETERS = {}", "DEFAULT_PARAMETERS = " + repr(notebook_parameters(settings))
-            )
         destination = settings.notebook_workspace_path(relative_path.as_posix())
         client.workspace.mkdirs(path=destination.rsplit("/", 1)[0])
         client.workspace.upload(

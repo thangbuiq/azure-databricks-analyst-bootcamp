@@ -36,7 +36,7 @@ uv run solution run-adf pl_example
 
 No job IDs, separate job declarations, registry edits or Terraform changes. Paths are relative to `databricks-etl-pipeline/src/notebooks/`, without `.py`. Deployment validates them, uploads notebooks, creates/reuses one serverless job per notebook, then connects each native ADF Job activity to its job.
 
-Each activity is a variable. `after=staging` waits for staging to succeed; `after=[country, demographic]` waits for both. The `activities` list includes the variables; list order alone does not set dependencies. Different parameters can be passed with `parameters={"year": "2021"}` and read through `dbutils.widgets.get("year")`. Deployment owns these jobs; keep notebook parameters in the definition rather than editing generated jobs in Studio. Runs sharing a notebook job queue when it is busy.
+Each activity is a variable. `after=staging` waits for staging to succeed; `after=[country, demographic]` waits for both. The `activities` list includes the variables; list order alone does not set dependencies. The included notebooks use explicit hard-coded values and need no parameters. Deployment owns these jobs; edit notebook code rather than editing generated jobs in Studio. Runs sharing a notebook job queue when it is busy.
 
 ## ADF Studio is optional too
 
