@@ -6,7 +6,34 @@ Run the deployed sales notebook on Azure Databricks serverless, manually or thro
 
 Preferred: **Get data → Azure Databricks**. Copy your SQL warehouse's server hostname and HTTP path from Databricks connection details. Authenticate, select `<catalog>.dm_sales.analytics_demo_sales_gold`, and rename the query `SalesReport`.
 
-Alternatively: **Azure Blob Storage** → select the `reports` container → filter to the `sales/` folder and `.parquet` part files → combine the file contents. Exclude `_SUCCESS` and metadata files. The output is a Spark directory, not a fixed `report.parquet` file. Use a storage credential for this connector, not the Databricks PAT.
+Alternatively, load the Parquet files directly from Azure Blob Storage, as described below.
+
+### Load Parquet from Azure Blob Storage
+
+The output is a Spark directory (`sales/`), not a fixed `report.parquet` file, so filter to its `.parquet` part files and combine them. Use the storage account key for this connector, not the Databricks PAT.
+
+1. In the Azure portal, open your storage account → **Security + networking → Access keys**, and copy **key1**'s Key.
+
+   ![Storage account access keys](../.github/images/powerbi-storage-account-access-key.png)
+
+2. In Power BI Desktop, select **Get data → Azure Blob Storage**, enter the storage account name, and paste the account key when asked. Check the `reports` container and select **Transform Data**. `_SUCCESS` and `_committed_*`/`_started_*` metadata files are listed beside the `.parquet` part file.
+
+   ![Choose the reports container](../.github/images/powerbi-azure-blob-choose-reports-container.png)
+
+3. Open **Advanced Editor**, replace the query with the following (use your account's URL), and rename the query `SalesReport`:
+
+   ```powerquery
+   let
+       Source = AzureStorage.Blobs("https://<storage-account>.blob.core.windows.net/"),
+       Reports = Source{[Name="reports"]}[Data],
+       SalesFiles = Table.SelectRows(Reports, each Text.StartsWith([Name], "sales/") and [Extension] = ".parquet"),
+       ReadParquet = Table.AddColumn(SalesFiles, "Table", each Parquet.Document([Content])),
+       Combined = Table.Combine(ReadParquet[Table])
+   in
+       Combined
+   ```
+
+   ![Power Query result](../.github/images/powerbi-power-query.png)
 
 ## 3. Check columns and expected results
 

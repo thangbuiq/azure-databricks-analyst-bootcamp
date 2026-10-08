@@ -122,6 +122,33 @@ The notebooks use separate Markdown and code cells for locations, transforms, wr
 
 Notebooks use `abfss://<container>@<account>.dfs.core.windows.net/...`. Each Delta table has its own directory with a `_delta_log`. These are external Unity Catalog tables in your storage account. Power BI can query the tables through a Databricks SQL warehouse; use [DEMO.md](DEMO.md) for the WHO solution and report examples.
 
+## Load Parquet into Power BI from Azure Blob
+
+The sales notebook writes Parquet part files to `reports/sales/`. In Power BI Desktop, use **Get data → Azure Blob Storage**, enter your storage account, and sign in with the **account key** from the Azure portal (**Security + networking → Access keys**, key1), not the Databricks PAT.
+
+![Storage account access keys](.github/images/powerbi-storage-account-access-key.png)
+
+Check the `reports` container and select **Transform Data**. Spark also writes `_SUCCESS` and other metadata files, so keep only the `.parquet` part files.
+
+![Choose the reports container](.github/images/powerbi-azure-blob-choose-reports-container.png)
+
+In **Advanced Editor**, use this query (replace `<storage-account>`) and rename it `SalesReport`:
+
+```powerquery
+let
+    Source = AzureStorage.Blobs("https://<storage-account>.blob.core.windows.net/"),
+    Reports = Source{[Name="reports"]}[Data],
+    SalesFiles = Table.SelectRows(Reports, each Text.StartsWith([Name], "sales/") and [Extension] = ".parquet"),
+    ReadParquet = Table.AddColumn(SalesFiles, "Table", each Parquet.Document([Content])),
+    Combined = Table.Combine(ReadParquet[Table])
+in
+    Combined
+```
+
+![Power Query result](.github/images/powerbi-power-query.png)
+
+More report steps: [powerbi-business-report](powerbi-business-report/README.md).
+
 ## Checks and cleanup
 
 ```bash
