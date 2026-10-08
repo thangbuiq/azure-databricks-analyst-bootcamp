@@ -1,8 +1,15 @@
 # Azure Databricks analyst bootcamp
 
+[![Azure Databricks](https://img.shields.io/badge/Azure-Databricks-0078D4?style=for-the-badge&logo=microsoftazure)](https://azure.microsoft.com/products/databricks)
+[![Databricks](https://img.shields.io/badge/Databricks-Serverless-FF3621?style=for-the-badge&logo=databricks)](https://databricks.com)
+[![PySpark](https://img.shields.io/badge/PySpark-Analytics-E25A1C?style=for-the-badge&logo=apachespark)](https://spark.apache.org/)
+[![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=for-the-badge&logo=python)](https://www.python.org/)
+
 **Azure Storage → Azure Databricks serverless → Delta tables → Power BI**, orchestrated with native ADF Job activities.
 
 Students run PySpark online in Databricks. Local Python automates Terraform, Unity Catalog storage setup, linked services and notebook upload.
+
+![Azure Databricks bootcamp architecture](.github/images/architecture.excalidraw.png)
 
 ## Configure
 
@@ -50,6 +57,8 @@ In **ADF Studio**:
 Serverless supports the native **Job** activity. ADF still requires a Databricks job; you can create it from ADF Studio. With Python definitions, deployment handles job creation and IDs automatically. No Databricks Web activities are used.
 
 A different student/job run identity needs Unity Catalog grants: `USE CATALOG`, `USE SCHEMA`, `CREATE TABLE`, `SELECT` / `MODIFY` on course tables, `READ FILES` on raw, and `CREATE EXTERNAL TABLE`, `READ FILES` / `WRITE FILES` on lakehouse (read/write on reports). Grant these through Catalog Explorer. Storage firewalls also need to permit serverless access.
+
+For a complete worked example, follow the [WHO demo](DEMO.md): it shows the four notebook transformations, Delta writes, ADF orchestration and Power BI model.
 
 ## Simple pipeline deployment
 
@@ -111,7 +120,7 @@ The notebooks use separate Markdown and code cells for locations, transforms, wr
 | WHO Delta | `lakehouse/dm_who/<table>` | `<catalog>.dm_who.<table>` |
 | Sales Parquet | `reports/sales/` (Spark part files) | — |
 
-Notebooks use `abfss://<container>@<account>.dfs.core.windows.net/...`. Each Delta table has its own directory with a `_delta_log`. These are external Unity Catalog tables in your storage account. Power BI can query the tables through a Databricks SQL warehouse; use [DEMO.md](DEMO.md) for the WHO star schema and report examples.
+Notebooks use `abfss://<container>@<account>.dfs.core.windows.net/...`. Each Delta table has its own directory with a `_delta_log`. These are external Unity Catalog tables in your storage account. Power BI can query the tables through a Databricks SQL warehouse; use [DEMO.md](DEMO.md) for the WHO solution and report examples.
 
 ## Checks and cleanup
 
