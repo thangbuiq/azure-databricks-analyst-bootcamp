@@ -19,13 +19,13 @@ dev = [
     "ruff>=0.11",
     "prek>=0.3.9,<0.5",
 ]
-cloud = ["azure-identity>=1.20,<2", "azure-mgmt-datafactory>=9,<10", "azure-storage-blob>=12.25,<13", "databricks-sdk>=0.60,<1"]
+cloud = ["azure-identity>=1.20,<2", "azure-storage-blob>=12.25,<13", "databricks-sdk>=0.60,<1"]
 
 [tool.uv]
 default-groups = ["dev", "cloud"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["azure-data-factory-pipeline/src/adf", "azure-terraform-provisioner/src/provisioner"]
+packages = ["azure-terraform-provisioner/src/provisioner"]
 
 [tool.pytest.ini_options]
 testpaths = ["azure-terraform-provisioner/tests"]
@@ -35,7 +35,6 @@ line-length = 120
 target-version = "py312"
 src = [
     "azure-terraform-provisioner/src",
-    "azure-data-factory-pipeline/src",
     "databricks-etl-pipeline/src",
 ]
 extend-exclude = [".runtime", ".terraform"]
