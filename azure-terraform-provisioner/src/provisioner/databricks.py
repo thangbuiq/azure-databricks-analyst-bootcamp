@@ -3,7 +3,7 @@
 from hashlib import sha256
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.errors import DatabricksError, NotFound
+from databricks.sdk.errors import NotFound
 from databricks.sdk.service import catalog, jobs, workspace
 
 
@@ -54,20 +54,6 @@ def deploy_notebook_jobs(settings, notebook_paths, client=None):
     return deployed
 
 
-def ensure_catalog(settings, client):
-    """Create DATABRICKS_CATALOG when missing; fall back to lakehouse managed storage if the metastore has no root."""
-    name = settings.databricks_catalog
-    try:
-        client.catalogs.get(name)
-        return
-    except NotFound:
-        pass
-    try:
-        client.catalogs.create(name=name)
-    except DatabricksError:
-        client.catalogs.create(name=name, storage_root=f"{settings.storage_url('lakehouse')}/_catalogs/{name}")
-
-
 def configure_storage(settings, resources, client=None):
     """Use the Terraform-managed identity for direct ADLS access on serverless."""
     connector_id = resources.get("databricks_access_connector_id")
@@ -97,7 +83,6 @@ def configure_storage(settings, resources, client=None):
         else:
             if location.url.rstrip("/") != url or location.credential_name != credential_name:
                 raise ValueError(f"External location {name} already points to different storage")
-    ensure_catalog(settings, client)
     for schema in (settings.databricks_schema, "dm_who"):
         try:
             client.schemas.get(f"{settings.databricks_catalog}.{schema}")

@@ -4,7 +4,7 @@ from dataclasses import replace
 from unittest.mock import Mock
 
 import pytest
-from databricks.sdk.errors import DatabricksError, NotFound
+from databricks.sdk.errors import NotFound
 from databricks.sdk.service import catalog
 
 from provisioner import databricks
@@ -80,7 +80,7 @@ def test_uploads_all_sources_without_jobs_or_staging_files(tmp_path, monkeypatch
 def test_storage_setup_creates_identity_locations_and_schemas(tmp_path):
     settings = Settings(root=tmp_path, storage_account="courseaccount")
     client = Mock()
-    for api in (client.storage_credentials, client.external_locations, client.catalogs, client.schemas):
+    for api in (client.storage_credentials, client.external_locations, client.schemas):
         api.get.side_effect = NotFound("missing")
     databricks.configure_storage(settings, {"databricks_access_connector_id": "/connector"}, client)
     credential = client.storage_credentials.create.call_args.kwargs
@@ -88,20 +88,7 @@ def test_storage_setup_creates_identity_locations_and_schemas(tmp_path):
     assert [c.kwargs["url"] for c in client.external_locations.create.call_args_list] == [
         settings.storage_url(name) for name in ("raw", "lakehouse", "reports")
     ]
-    client.catalogs.create.assert_called_once_with(name="workspace")
     assert [c.kwargs["name"] for c in client.schemas.create.call_args_list] == ["dm_sales", "dm_who"]
-
-
-def test_catalog_falls_back_to_lakehouse_storage_root(tmp_path):
-    settings = Settings(root=tmp_path, storage_account="courseaccount", databricks_catalog="bda")
-    client = Mock()
-    client.catalogs.get.side_effect = NotFound("missing")
-    client.catalogs.create.side_effect = [DatabricksError("no metastore root"), None]
-    databricks.ensure_catalog(settings, client)
-    assert client.catalogs.create.call_args.kwargs == {
-        "name": "bda",
-        "storage_root": "abfss://lakehouse@courseaccount.dfs.core.windows.net/_catalogs/bda",
-    }
 
 
 def test_storage_setup_preserves_matching_existing_objects(tmp_path):

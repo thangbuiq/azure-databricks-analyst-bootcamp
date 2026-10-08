@@ -1,107 +1,30 @@
 # Azure setup
 
-Step by step, from a fresh **Azure for Students** account. Run every command from the repository root.
+Use an existing **Azure Databricks serverless workspace** and a Unity Catalog catalog. The provisioner does not create the workspace.
 
-## 0. Install
+## Root `.env`
 
-- [uv](https://docs.astral.sh/uv/getting-started/installation/)
-- [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli): `brew install azure-cli` (macOS)
+Copy [.env.example](.env.example) only if `.env` does not already exist.
 
-```bash
-uv sync --locked
-cp .env.example .env
-```
-
-Keep `.env` private. Never commit it.
-
-## 1. Log in to Azure
-
-```bash
-az login
-az account show --query "{subscription:id, tenant:tenantId}" -o json
-```
-
-Copy both IDs into `.env` as `AZURE_SUBSCRIPTION_ID` and `AZURE_TENANT_ID`.
-
-## 2. Register Azure services (once)
-
-```bash
-for p in Microsoft.Storage Microsoft.DataFactory Microsoft.Databricks Microsoft.Authorization; do az provider register -n $p; done
-```
-
-## 3. Create the deployment service principal
-
-Replace `<SUBSCRIPTION_ID>`:
-
-```bash
-az ad sp create-for-rbac \
-    --name bda-provisioner \
-    --role Owner \
-    --scopes "/subscriptions/$(az account show --query id -o tsv)"
-```
-
-Copy the output into `.env`:
-
-| Output | `.env` |
+| Input | Value |
 |---|---|
-| `appId` | `AZURE_CLIENT_ID` |
-| `password` | `AZURE_CLIENT_SECRET` |
+| `AZURE_SUBSCRIPTION_ID` | Azure Portal → Subscriptions → ID |
+| `AZURE_TENANT_ID` | Microsoft Entra ID → Tenant ID |
+| `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` | Deployment app's client ID and secret **value** |
+| `RESOURCE_GROUP`, `AZURE_LOCATION` | Deployment resource group and region |
+| `STORAGE_ACCOUNT`, `DATA_FACTORY` | Azure resource names; preserve names already in Terraform state |
+| `DATABRICKS_HOST` | `https://adb-....azuredatabricks.net` |
+| `DATABRICKS_TOKEN` | PAT of the Databricks deployment user |
+| `DATABRICKS_CATALOG` | Existing catalog name from Catalog Explorer |
+| `DATABRICKS_NOTEBOOK_PATH` | Upload folder, default `/Shared/analytics-demo` |
 
-`Owner` is needed so Terraform can grant the Databricks connector access to storage. Without it, setup fails with `403 AuthorizationFailed ... roleAssignments/write`.
+## Permissions
 
-## 4. Choose resource names
+- Azure deployer: **Contributor** for resources, plus **Owner** or **User Access Administrator** at the storage scope to assign the connector's role.
+- Databricks deployer: permission to upload notebooks, create storage credentials/external locations, and create schemas in the selected catalog.
+- Notebook/job users: catalog/schema usage, table creation/read/write, and file/external-table privileges on the external locations. The PAT owner initially owns the locations and schemas created by deployment; other users need grants in Catalog Explorer.
 
-In `.env`:
-
-| Key | Rule |
-|---|---|
-| `STORAGE_ACCOUNT` | Globally unique, 3-24 lowercase letters/digits, e.g. `bda<yourname>01` |
-| `DATA_FACTORY` | Globally unique, letters/digits/`-`, e.g. `bda-factory-<yourname>` |
-| `RESOURCE_GROUP` | Keep `rg-analytics-demo` |
-| `AZURE_LOCATION` | Keep `japaneast`. Student subscriptions only allow some regions; if you get `RequestDisallowedByAzure`, try `southeastasia`, `eastasia` or `eastus` |
-
-## 5. Databricks workspace
-
-1. Azure Portal → **Create a resource** → **Azure Databricks** → create it in any resource group **other than** `rg-analytics-demo` (cleanup deletes that group).
-2. Open the workspace → **Launch Workspace**.
-3. Copy the browser URL (`https://adb-....azuredatabricks.net`) into `DATABRICKS_HOST`.
-4. Top-right avatar → **Settings** → **Developer** → **Access tokens** → **Generate new token** → copy into `DATABRICKS_TOKEN`.
-5. Choose `DATABRICKS_CATALOG` (e.g. `workspace`). Setup creates it if it does not exist.
-
-Your user needs `CREATE STORAGE CREDENTIAL`, `CREATE EXTERNAL LOCATION`, and `CREATE CATALOG` on the metastore (or `USE CATALOG` / `CREATE SCHEMA` on an existing catalog). Workspace creators are usually metastore admins. If setup says permission denied, ask one to grant them in **Catalog Explorer**.
-
-## 6. Deploy
-
-```bash
-uv run solution setup
-```
-
-Takes a few minutes. It creates the Azure resources, links Databricks to storage, and uploads the notebooks to `DATABRICKS_NOTEBOOK_PATH`.
-
-## 7. Check
-
-- Azure Portal → `rg-analytics-demo`: storage account, Data Factory, access connector.
-- Databricks → **Workspace** → **Shared** → `analytics-demo`: notebooks.
-- Databricks → **Catalog**: schemas `dm_sales`, `dm_who`.
-
-Then follow [DEMO.md](DEMO.md). The notebooks hard-code `bdastorageaccountmaster` and the `workspace` catalog. Edit those values in the first code cell to match your `.env`.
-
-## Troubleshooting
-
-| Error | Fix |
-|---|---|
-| `AuthorizationFailed ... roleAssignments/write` | Service principal lacks `Owner`. Run step 3's role again: `az role assignment create --assignee <AZURE_CLIENT_ID> --role Owner --scope /subscriptions/<SUBSCRIPTION_ID>`. Wait 5 minutes, rerun `uv run solution setup` |
-| `StorageAccountAlreadyTaken` / name invalid | Change `STORAGE_ACCOUNT` (step 4) |
-| `RequestDisallowedByAzure` | Change `AZURE_LOCATION` (step 4) |
-| `MissingSubscriptionRegistration` | Run step 2, wait a minute, rerun |
-| `invalid_client` / `AADSTS7000215` | Wrong `AZURE_CLIENT_SECRET`. Use `password`, not `appId` |
-| Databricks `PERMISSION_DENIED` | Step 5 grants |
-| Storage validation `access denied` right after setup | Role is still propagating. Wait 5 minutes, run `uv run solution deploy` |
-| Terraform says resources already exist | Rerun `uv run solution setup`. Terraform keeps state in `azure-terraform-provisioner/terraform.tfstate`; do not delete it |
-
-## Reference
-
-PAT authenticates ADF and notebook upload. An **Access Connector managed identity** authenticates Databricks access to storage. Sharing a resource group does not grant storage access. Notebook/job users other than the PAT owner need catalog/schema usage, table, and external-location grants in Catalog Explorer.
+PAT authenticates ADF and notebook upload. An **Access Connector managed identity** authenticates Databricks access to storage. Sharing a resource group does not grant storage access.
 
 ## Provision and deploy
 

@@ -22,7 +22,7 @@ Preserve an existing `.env`. Fill in [.env.example](.env.example): Azure deploym
 
 Use your existing **Azure Databricks** workspace URL, `https://adb-....azuredatabricks.net`. The workspace is not created by this repository. Resource group/location should match the storage deployment; an existing Terraform deployment must retain its state and resource names.
 
-The deployment service principal needs Owner (Contributor alone fails with `403 roleAssignments/write`). New to Azure? Follow the step-by-step [Azure setup](AZURE.md). The Databricks PAT owner needs `CREATE STORAGE CREDENTIAL`, `CREATE EXTERNAL LOCATION`, and `USE CATALOG` / `CREATE SCHEMA` on the target catalog. A workspace/metastore administrator can grant these.
+The deployment service principal needs Contributor plus permission to assign storage RBAC roles (for example, User Access Administrator at the storage scope). The Databricks PAT owner needs `CREATE STORAGE CREDENTIAL`, `CREATE EXTERNAL LOCATION`, and `USE CATALOG` / `CREATE SCHEMA` on the target catalog. A workspace/metastore administrator can grant these.
 
 ## Deploy
 
