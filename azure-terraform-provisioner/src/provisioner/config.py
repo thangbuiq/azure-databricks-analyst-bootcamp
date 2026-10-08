@@ -45,6 +45,9 @@ class Settings:
     def notebook_source_dir(self):
         return self.root / "databricks-etl-pipeline/src/notebooks"
 
+    def notebook_workspace_path(self, name):
+        return f"{self.notebook_path.rstrip('/')}/{name}"
+
     def validate_databricks(self):
         if not self.databricks_host or not self.databricks_token:
             raise ValueError("Set DATABRICKS_HOST and DATABRICKS_TOKEN in .env before deploying")
